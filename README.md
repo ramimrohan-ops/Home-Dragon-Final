@@ -232,3 +232,9 @@ One UI has no Autostart manager, so it can stop the dragon service while the pho
 - New "Dragon health" card on the app screen: service running or not, icon finder connected or not, auto-restart count, and a log of the last 16 events (app process started, screen off, unlocked, dragon service started/stopped by you or by the system, icon finder connected/disconnected, restarts). Only event names and times are stored, on the phone.
 - On Samsung, "Background running" tries to open Samsung's battery page, falls back to App info.
 - Limits: if One UI force-stops the whole app or switches the icon finder off, nothing inside the app can start it again. Use Settings > Battery > Background usage limits > Never sleeping apps and turn off Put unused apps to sleep.
+
+## v2.27 - Samsung never sent the unlock broadcast
+The v2.26 health log showed it: after "Screen off" there was never an "Unlocked" event, while the service and icon finder stayed alive (0 restarts). The unlock broadcast is not delivered on that Samsung, so the dragon stayed hidden as if the phone were still locked. Now:
+- every refresh reads the real state (screen awake and no lock screen) instead of relying on the broadcast,
+- after "screen on" the lock state is checked every 0.4 s for up to 2 minutes,
+- the re-checks after unlock also refresh the dragon, and the log gets "Screen on ..." and "Unlock found by checking" events.

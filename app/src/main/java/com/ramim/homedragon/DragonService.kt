@@ -18,6 +18,8 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.IBinder
+import android.os.PowerManager
+import android.os.SystemClock
 import android.provider.Settings
 import android.view.Display
 import android.view.Gravity
@@ -47,14 +49,40 @@ class DragonService : Service() {
         private set
     private var screenActive = true
     private val handler = Handler(Looper.getMainLooper())
-    private val recheckTask = Runnable { IconRegistry.recheck?.invoke() }
+    private val recheckTask = Runnable { apply(); IconRegistry.recheck?.invoke() }
+    private val pm by lazy { getSystemService(POWER_SERVICE) as PowerManager }
+    private val km by lazy { getSystemService(KEYGUARD_SERVICE) as KeyguardManager }
+
+    /** The real state right now: screen on and no lock screen in front. */
+    private fun liveActive() = pm.isInteractive && !km.isKeyguardLocked
+
+    // Some phones (seen on a Samsung with One UI) never deliver the "user present" broadcast after unlocking, so the dragon stayed
+    // hidden. After the screen turns on, look at the real lock state every 0.4 s (up to 2 minutes) until the phone is unlocked.
+    private var pollUntil = 0L
+    private val unlockPoll = object : Runnable {
+        override fun run() {
+            if (screenActive || view == null) return
+            if (!pm.isInteractive) return                       // screen went off again: the next "screen on" starts the check again
+            apply()
+            if (!screenActive && SystemClock.elapsedRealtime() < pollUntil) handler.postDelayed(this, 400)
+        }
+    }
+    private fun startUnlockPoll() {
+        pollUntil = SystemClock.elapsedRealtime() + 120_000
+        handler.removeCallbacks(unlockPoll)
+        handler.postDelayed(unlockPoll, 400)
+    }
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(c: Context, i: Intent) {
             when (i.action) {
                 Intent.ACTION_SCREEN_OFF -> { screenActive = false; Diag.log(c, "Screen off") }
                 // If there is no lock screen the user is already on the home screen.
-                Intent.ACTION_SCREEN_ON -> screenActive = !(getSystemService(KEYGUARD_SERVICE) as KeyguardManager).isKeyguardLocked
+                Intent.ACTION_SCREEN_ON -> {
+                    screenActive = !km.isKeyguardLocked
+                    Diag.log(c, if (screenActive) "Screen on, no lock screen" else "Screen on, lock screen showing")
+                    startUnlockPoll()
+                }
                 Intent.ACTION_USER_PRESENT -> { screenActive = true; Diag.log(c, "Unlocked") }
             }
             apply()
@@ -131,7 +159,6 @@ class DragonService : Service() {
         }
         ContextCompat.registerReceiver(this, receiver, f, ContextCompat.RECEIVER_NOT_EXPORTED)
 
-        val km = getSystemService(KEYGUARD_SERVICE) as KeyguardManager
         screenActive = !km.isKeyguardLocked
         apply()
     }
@@ -160,6 +187,10 @@ class DragonService : Service() {
             v.visibility = View.GONE
             v.pause()
             return
+        }
+        if (!screenActive && liveActive()) {       // the unlock broadcast never came, but the phone is unlocked and awake
+            screenActive = true
+            Diag.log(this, "Unlock found by checking (no unlock broadcast)")
         }
         if (!screenActive) {                       // screen off or locked: stop everything at once
             v.visibility = View.GONE
@@ -191,6 +222,7 @@ class DragonService : Service() {
 
     override fun onDestroy() {
         handler.removeCallbacks(recheckTask)
+        handler.removeCallbacks(unlockPoll)
         // Prefs.enabled is only switched off by the Stop button, so "still on" here means Android stopped the service.
         Diag.log(this, if (Prefs.enabled(this)) "Dragon service stopped by the system" else "Dragon service stopped by you")
         instance = null
