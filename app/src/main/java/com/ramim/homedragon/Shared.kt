@@ -12,6 +12,7 @@ object IconRegistry {
     @Volatile var launcherPkg: String? = null
     var listener: (() -> Unit)? = null                  // always called on the main thread
     var swipeListener: (() -> Unit)? = null             // launcher page is scrolling sideways (main thread)
+    @Volatile var homeWhy: String = ""                 // why the home screen was last judged hidden (for the health log)
     var recheck: (() -> Unit)? = null                   // asks the icon finder to look again at what is in front (e.g. right after unlock)
 }
 

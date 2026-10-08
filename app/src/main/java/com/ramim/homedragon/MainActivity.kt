@@ -470,6 +470,11 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         // while this screen is open the home-screen dragon stays hidden: only the preview boxes show a dragon
+        Diag.log(this, "Dragon app opened; home screen was " + when {
+            !IconRegistry.serviceActive -> "unknown (icon finder not connected)"
+            IconRegistry.onHome -> "detected"
+            else -> "NOT detected (" + IconRegistry.homeWhy.ifEmpty { "no reason noted" } + ")"
+        })
         DragonService.appOpen = true
         DragonService.instance?.refreshHold()
         try { flamePreview?.start() } catch (_: Throwable) {}

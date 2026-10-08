@@ -47,6 +47,7 @@ class IconFinderService : AccessibilityService() {
 
     override fun onUnbind(intent: Intent?): Boolean {
         Diag.log(this, "Icon finder disconnected")
+        handler.removeCallbacks(rc1); handler.removeCallbacks(rc2); handler.removeCallbacks(rc3)
         IconRegistry.recheck = null
         IconRegistry.serviceActive = false
         IconRegistry.icons = emptyList()
@@ -74,19 +75,35 @@ class IconFinderService : AccessibilityService() {
      */
     private fun homeFromWindows(): Boolean? {
         val launcher = IconRegistry.launcherPkg ?: return null
+        val p = topAppPackage() ?: return null
+        if (p.isEmpty()) return false                    // unreadable window on top (secure app): not home
+        return p == launcher && !recents
+    }
+
+    /** Package of the top-most application window (not keyboards, status bar, our overlay or picture-in-picture). null = unknown, "" = unreadable. */
+    private fun topAppPackage(): String? {
         try {
             for (w in windows) {                         // ordered top to bottom
                 if (w.type != AccessibilityWindowInfo.TYPE_APPLICATION) continue
                 if (w.isInPictureInPictureMode) continue
                 val p = w.root?.packageName?.toString()
                 if (p == packageName) continue
-                if (p == null) return false             // unreadable window on top (secure app): not home
-                return p == launcher && !recents
+                return p ?: ""
             }
         } catch (_: Exception) {
         }
         return null
     }
+
+    /** Short reason for the health log: why the dragon is not being shown. */
+    private fun whyNow(): String = when {
+        IconRegistry.onHome -> "home screen in front"
+        recentsEvt -> "recents screen event"
+        recentsNode -> "recents views or no icons seen"
+        else -> "another app or unreadable window in front"
+    }
+
+    private var rechecking = false                       // true while a re-check (not a normal event) is running: only used for the log
 
     /**
      * Look again at what is in front. Called a few times after the phone is unlocked: while the lock screen is up the
@@ -95,19 +112,39 @@ class IconFinderService : AccessibilityService() {
      */
     private fun recheckHome() {
         if (!IconRegistry.serviceActive) return
-        val byWindows = homeFromWindows()
-        if (byWindows != null) {
-            setHome(byWindows)
-        } else {
-            val root = try { rootInActiveWindow } catch (e: Exception) { null }
-            if (root?.packageName?.toString() == IconRegistry.launcherPkg && !recents) setHome(true)
+        val launcher = IconRegistry.launcherPkg ?: return
+        var top = topAppPackage()
+        if (top == null) top = try { rootInActiveWindow?.packageName?.toString() } catch (e: Exception) { null }
+        if (top != launcher) {                           // another app (or an unreadable window) is in front: nothing to look at
+            if (top != null) setHome(false)
+            return
         }
-        queueScan()
+        // The launcher is in front. Do not trust old "recents" notes: read the live screen now.
+        rechecking = true
+        try {
+            lastScan = System.currentTimeMillis()
+            scan(true)
+            homeFromWindows()?.let { setHome(it) }
+        } finally {
+            rechecking = false
+        }
+    }
+
+    private val rc1 = Runnable { recheckHome() }
+    private val rc2 = Runnable { recheckHome() }
+    private val rc3 = Runnable { recheckHome() }
+
+    /** After a window change while the dragon is hidden: look again 0.3, 0.9 and 2 s later, when the transition is over. */
+    private fun scheduleRechecks() {
+        handler.removeCallbacks(rc1); handler.removeCallbacks(rc2); handler.removeCallbacks(rc3)
+        handler.postDelayed(rc1, 300); handler.postDelayed(rc2, 900); handler.postDelayed(rc3, 2000)
     }
 
     private fun setHome(h: Boolean) {
         if (h != IconRegistry.onHome) {
+            if (h && rechecking) Diag.log(this, "Home found by re-check (was hidden: " + whyNow() + ")")
             IconRegistry.onHome = h
+            IconRegistry.homeWhy = whyNow()
             IconRegistry.listener?.invoke()
             if (h) queueScan()
         }
@@ -122,6 +159,8 @@ class IconFinderService : AccessibilityService() {
         // Window list changes carry no package name, so they are handled first.
         if (type == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
             homeFromWindows()?.let { setHome(it) }
+            DragonService.instance?.resetHiddenBackoff()
+            if (!IconRegistry.onHome) scheduleRechecks()
             return
         }
         val pkg = event.packageName?.toString() ?: return
@@ -134,6 +173,8 @@ class IconFinderService : AccessibilityService() {
                 recentsEvtAt = System.currentTimeMillis()
             }
             setHome(homeFromWindows() ?: (pkg == launcher && !recents))
+            DragonService.instance?.resetHiddenBackoff()
+            if (!IconRegistry.onHome) scheduleRechecks()
         }
         if (event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED && pkg == launcher) {
             val dx = event.scrollDeltaX; val dy = event.scrollDeltaY
@@ -163,10 +204,11 @@ class IconFinderService : AccessibilityService() {
         }, wait)
     }
 
-    private fun scan() {
+    private fun scan(force: Boolean = false) {
         val root = try { rootInActiveWindow } catch (e: Exception) { null } ?: return
         if (root.packageName?.toString() != IconRegistry.launcherPkg) return
 
+        val whyBefore = whyNow()
         val d = resources.displayMetrics
         val minSide = 44 * d.density
         val maxSide = 140 * d.density
@@ -222,16 +264,20 @@ class IconFinderService : AccessibilityService() {
         val settled = System.currentTimeMillis() - lastScrollMs > 600
         if (found.size >= 4) missCount = 0 else if (settled) missCount++
         // a recents flag from an event is dropped once icons are plainly visible again for a while
-        val evtStale = recentsEvt && found.size >= 4 && !sawRecents && System.currentTimeMillis() - recentsEvtAt > 4000
+        val evtStale = recentsEvt && found.size >= 4 && !sawRecents && System.currentTimeMillis() - recentsEvtAt > (if (force) 800 else 4000)
         if (evtStale) recentsEvt = false
         val nowRecents = sawRecents || missCount >= 2
         val changed = nowRecents != recentsNode || evtStale
         recentsNode = nowRecents
         if (found.size >= 4 && !sawRecents) {
             IconRegistry.icons = found
-            if (!IconRegistry.onHome) IconRegistry.onHome = true   // the front window is the launcher and shows its icons: it is the home screen
+            if (!IconRegistry.onHome) {
+                IconRegistry.onHome = true                         // the front window is the launcher and shows its icons: it is the home screen
+                if (rechecking) Diag.log(this, "Home found by re-check (was hidden: $whyBefore)")
+            }
             IconRegistry.listener?.invoke()
         }
         if (changed) refreshHome()
+        IconRegistry.homeWhy = whyNow()
     }
 }

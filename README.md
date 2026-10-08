@@ -238,3 +238,9 @@ The v2.26 health log showed it: after "Screen off" there was never an "Unlocked"
 - every refresh reads the real state (screen awake and no lock screen) instead of relying on the broadcast,
 - after "screen on" the lock state is checked every 0.4 s for up to 2 minutes,
 - the re-checks after unlock also refresh the dragon, and the log gets "Screen on ..." and "Unlock found by checking" events.
+
+## v2.28 - dragon stays hidden after returning from Recents
+Seen on a second Samsung: open Recents, switch to another app, press home, and the dragon stays hidden although the phone is unlocked. Opening and minimizing the dragon app brought it back. The home check trusted an old "recents is showing" note that One UI never cleared. Now:
+- After any window change while the dragon is hidden, the icon finder re-reads the live screen at 0.3, 0.9 and 2 s. If the launcher is in front, shows its icons and no recents views, the old note is dropped and the dragon comes back.
+- Safety net: while the dragon is hidden, the phone is awake and unlocked and the app is closed, the same re-check runs every 1 s for 20 s after the last window change, then every 5 s. It stops when the dragon is shown, the screen turns off or the app opens. A re-check only reads the top window's app name; the icons are scanned only if the launcher is that window.
+- Health log: "Home found by re-check (was hidden: reason)" when a re-check fixed a stuck state, and "Dragon app opened; home screen was detected / NOT detected (reason)" every time the app opens.
