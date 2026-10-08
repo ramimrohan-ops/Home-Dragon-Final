@@ -40,10 +40,13 @@ class IconFinderService : AccessibilityService() {
         IconRegistry.launcherPkg = packageManager.resolveActivity(home, 0)?.activityInfo?.packageName
         IconRegistry.serviceActive = true
         IconRegistry.recheck = { handler.post { recheckHome() } }
+        Diag.log(this, "Icon finder connected")
+        KeepAlive.ensureDragon(this, "icon finder connected")
         IconRegistry.listener?.invoke()
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
+        Diag.log(this, "Icon finder disconnected")
         IconRegistry.recheck = null
         IconRegistry.serviceActive = false
         IconRegistry.icons = emptyList()
@@ -112,6 +115,7 @@ class IconFinderService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         if (!IconRegistry.serviceActive) return          // not connected (no consent yet)
+        KeepAlive.ensureDragon(this, "screen change")    // dragon service gone while it should be on: start it again (cheap check, throttled)
         val launcher = IconRegistry.launcherPkg ?: return
         val type = event.eventType
 

@@ -49,6 +49,7 @@ class MainActivity : Activity() {
 
     private lateinit var pill: TextView
     private lateinit var toggle: TextView
+    private lateinit var healthText: TextView
     private val setupRows = ArrayList<SetupRow>()
     private val sliders = ArrayList<Slider>()
     private var flamePreview: PreviewView? = null
@@ -386,6 +387,23 @@ class MainActivity : Activity() {
         setup.addView(r1.view); setup.addView(r2.view); setup.addView(r3.view)
         col.addView(setup)
 
+        // health: what the dragon service and the icon finder are doing, and what happened around the last lock (helps on Samsung)
+        val health = card()
+        val hHead = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        hHead.addView(text("Dragon health", 12f, MUTED, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        hHead.addView(text("Clear log", 12f, ORANGE, true).apply {
+            setPadding(dp(8), dp(4), 0, dp(4))
+            isClickable = true
+            setOnClickListener { Diag.clear(this@MainActivity); refresh() }
+        })
+        health.addView(hHead)
+        healthText = text("", 11.5f, FG).apply {
+            typeface = android.graphics.Typeface.MONOSPACE
+            setPadding(0, dp(6), 0, 0)
+        }
+        health.addView(healthText)
+        col.addView(health)
+
         val scroll = ScrollView(this).apply {
             setBackgroundColor(BG)
             isFillViewport = true
@@ -526,6 +544,15 @@ class MainActivity : Activity() {
         setupRows[2].update(pm.isIgnoringBatteryOptimizations(packageName))
 
         val running = DragonService.instance != null
+        val finder = IconRegistry.serviceActive
+        val sb = StringBuilder()
+        sb.append("Dragon service : ").append(if (running) "running" else "NOT running").append('\n')
+        sb.append("Icon finder    : ").append(if (finder) "connected" else if (a11yEnabled()) "switched on, not connected" else "off").append('\n')
+        sb.append("Auto-restarts  : ").append(Diag.restartCount(this)).append('\n')
+        val ev = Diag.lines(this)
+        sb.append('\n').append(if (ev.isEmpty()) "No events yet." else "Recent events (newest first):")
+        for (e in ev) sb.append('\n').append(e)
+        healthText.text = sb.toString()
         pill.text = if (running) "●  Running" else "○  Stopped"
         pill.setTextColor(if (running) GREEN else MUTED)
         pill.background = shape(if (running) Color.parseColor("#12332A") else CARD, 20, if (running) GREEN else STROKE)
@@ -550,16 +577,36 @@ class MainActivity : Activity() {
     private fun isSamsung() = Build.MANUFACTURER.equals("samsung", ignoreCase = true)
 
     private fun openBackgroundSettings() {
+        if (isSamsung()) {
+            // Samsung One UI: Battery > Background usage limits > Never sleeping apps. The page behind these names changes between
+            // One UI versions and they are not public, so each is tried in turn and the app info page is the safe fallback.
+            val tries = listOf(
+                "com.samsung.android.lool" to "com.samsung.android.sm.battery.ui.BatteryActivity",
+                "com.samsung.android.lool" to "com.samsung.android.sm.ui.battery.BatteryActivity"
+            )
+            var opened = false
+            for ((pkg, cls) in tries) {
+                try {
+                    startActivity(Intent().setComponent(ComponentName(pkg, cls)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    opened = true
+                    break
+                } catch (_: Throwable) {
+                }
+            }
+            if (!opened) {
+                try { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) } catch (_: Throwable) {}
+            }
+            Toast.makeText(this,
+                (if (opened) "" else "App info opened: tap Battery > Unrestricted. ") +
+                    "Also: Settings > Battery > Background usage limits > Never sleeping apps > add Home Dragon, and turn off Put unused apps to sleep.",
+                Toast.LENGTH_LONG).show()
+            return
+        }
         // Battery: open the system battery list (no special permission needed). The user picks Home Dragon and "No restrictions".
         try {
             startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
         } catch (e: Exception) {
             try { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) } catch (_: Exception) {}
-        }
-        if (isSamsung()) {
-            // Samsung One UI: Battery > Background usage limits > Never sleeping apps.
-            Toast.makeText(this, "Samsung: Settings > Battery > Background usage limits > Never sleeping apps > add Home Dragon. Also turn off Put unused apps to sleep.", Toast.LENGTH_LONG).show()
-            return
         }
         // HyperOS / MIUI: Autostart screen (not available on every build, so failure is fine).
         try {

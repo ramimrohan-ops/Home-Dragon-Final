@@ -52,10 +52,10 @@ class DragonService : Service() {
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(c: Context, i: Intent) {
             when (i.action) {
-                Intent.ACTION_SCREEN_OFF -> screenActive = false
+                Intent.ACTION_SCREEN_OFF -> { screenActive = false; Diag.log(c, "Screen off") }
                 // If there is no lock screen the user is already on the home screen.
                 Intent.ACTION_SCREEN_ON -> screenActive = !(getSystemService(KEYGUARD_SERVICE) as KeyguardManager).isKeyguardLocked
-                Intent.ACTION_USER_PRESENT -> screenActive = true
+                Intent.ACTION_USER_PRESENT -> { screenActive = true; Diag.log(c, "Unlocked") }
             }
             apply()
             if (i.action != Intent.ACTION_SCREEN_OFF) {
@@ -71,6 +71,7 @@ class DragonService : Service() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        Diag.log(this, "Dragon service started")
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
 
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
@@ -190,6 +191,8 @@ class DragonService : Service() {
 
     override fun onDestroy() {
         handler.removeCallbacks(recheckTask)
+        // Prefs.enabled is only switched off by the Stop button, so "still on" here means Android stopped the service.
+        Diag.log(this, if (Prefs.enabled(this)) "Dragon service stopped by the system" else "Dragon service stopped by you")
         instance = null
         IconRegistry.listener = null
         IconRegistry.swipeListener = null

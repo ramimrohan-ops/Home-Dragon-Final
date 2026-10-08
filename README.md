@@ -224,3 +224,11 @@ Best-guess Samsung support (not tested on a Samsung phone):
 ## v2.25 - dragon disappeared after unlock
 After unlocking, the dragon could stay hidden while the app still said "running". Cause (found by reading the code, not reproduced on a device): while the lock screen is up the launcher window cannot be read, so the icon finder marked the home screen as covered; the window change after unlock could arrive before the launcher was readable again, and nothing re-checked, so the dragon stayed hidden until restarting it from the app produced new window events.
 Fixes: after screen-on and unlock the app asks the icon finder to look again five times (0.3, 0.9, 2, 4 and 8 s); and when a scan sees the launcher in front with its icons, it now marks the home screen as visible by itself.
+
+## v2.26 - dragon stops after screen lock on Samsung
+One UI has no Autostart manager, so it can stop the dragon service while the phone sleeps. Changes (untested on a Samsung):
+- The icon finder (Android restarts accessibility services itself) now starts the dragon service again whenever it connects or sees a screen change and the dragon should be on but its service is gone (at most once every 30 s). It will not restart a dragon you stopped with the Stop button.
+- The dragon also restarts after the app is updated (MY_PACKAGE_REPLACED).
+- New "Dragon health" card on the app screen: service running or not, icon finder connected or not, auto-restart count, and a log of the last 16 events (app process started, screen off, unlocked, dragon service started/stopped by you or by the system, icon finder connected/disconnected, restarts). Only event names and times are stored, on the phone.
+- On Samsung, "Background running" tries to open Samsung's battery page, falls back to App info.
+- Limits: if One UI force-stops the whole app or switches the icon finder off, nothing inside the app can start it again. Use Settings > Battery > Background usage limits > Never sleeping apps and turn off Put unused apps to sleep.
