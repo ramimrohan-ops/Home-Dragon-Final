@@ -1,10 +1,10 @@
 package com.ramim.homedragon
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Intent
 import android.graphics.Rect
 import android.graphics.RectF
-import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
@@ -42,14 +42,17 @@ class IconFinderService : AccessibilityService() {
         IconRegistry.serviceActive = true
         IconRegistry.recheck = { handler.post { recheckHome() } }
         Diag.log(this, "Icon finder connected")
-        IconRegistry.powerDialog = { if (Build.VERSION.SDK_INT >= 31) performGlobalAction(GLOBAL_ACTION_POWER_DIALOG) else false }
+        light = false                                    // Android starts a connected service in full mode
+        IconRegistry.light = false
+        IconRegistry.modeChanged = { handler.post { updateMode() } }
         KeepAlive.ensureDragon(this, "icon finder connected")
         IconRegistry.listener?.invoke()
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
         Diag.log(this, "Icon finder disconnected")
-        IconRegistry.powerDialog = null
+        IconRegistry.modeChanged = null
+        IconRegistry.light = false
         handler.removeCallbacks(rc1); handler.removeCallbacks(rc2); handler.removeCallbacks(graceRun)
         IconRegistry.recheck = null
         IconRegistry.serviceActive = false
@@ -80,6 +83,7 @@ class IconFinderService : AccessibilityService() {
         keeping = false
         val launcher = IconRegistry.launcherPkg ?: return null
         val p = topAppPackage()
+        if (!p.isNullOrEmpty()) launcherFront = p == launcher
         unreadableTop = p == "" && Foreground.granted(this)   // only with usage access: the re-check can then tell which app it is
         if (p == null) return null
         if (p.isEmpty()) {                                   // unreadable window on top: do not just hide the dragon
@@ -183,7 +187,9 @@ class IconFinderService : AccessibilityService() {
             val active = try { rootInActiveWindow?.packageName?.toString() } catch (e: Exception) { null }
             if (active != launcher) {
                 unreadableLog("$top in front (usage access): hidden")
+                launcherFront = false
                 setHome(false)
+                updateMode()
                 return
             }
             top = launcher
@@ -195,10 +201,12 @@ class IconFinderService : AccessibilityService() {
             return
         }
         if (top != launcher) {                           // another app is in front: nothing to look at
-            if (top != null) setHome(false)
+            if (top != null) { launcherFront = false; setHome(false); updateMode() }
             return
         }
-        // The launcher is in front. Do not trust old "recents" notes: read the live screen now.
+        // The launcher is in front. Do not trust old "recents" notes: read the live screen now (in full mode).
+        launcherFront = true
+        updateMode()
         rechecking = true
         try {
             lastScan = System.currentTimeMillis()
@@ -218,12 +226,43 @@ class IconFinderService : AccessibilityService() {
         handler.postDelayed(rc1, 400); handler.postDelayed(rc2, 800)
     }
 
+    private var light = false               // light mode: only window changes are delivered (see updateMode)
+    private var launcherFront = true        // the launcher window is in front (home, app drawer or recents): its screen still needs to be read
+
+    /**
+     * Light mode while the dragon has nothing to follow: the home screen is not in front and the launcher is not in front
+     * either (another app is open), or the screen is off or locked. Android then only reports window changes, not every
+     * content change and scroll of the app in front, and does not build the full node tree. Full mode returns as soon as
+     * the launcher is in front again or the screen is awake and home is found.
+     */
+    private fun updateMode() {
+        val want = IconRegistry.idle || (!IconRegistry.onHome && !launcherFront)
+        if (want == light) return
+        try {
+            val info = getServiceInfo() ?: return
+            if (want) {
+                info.eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or AccessibilityEvent.TYPE_WINDOWS_CHANGED
+                info.flags = AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+            } else {
+                info.eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or
+                    AccessibilityEvent.TYPE_VIEW_SCROLLED or AccessibilityEvent.TYPE_WINDOWS_CHANGED
+                info.flags = AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS or
+                    AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
+            }
+            setServiceInfo(info)
+            light = want
+            IconRegistry.light = want
+        } catch (_: Throwable) {
+        }
+    }
+
     private fun setHome(h: Boolean) {
         if (h != IconRegistry.onHome) {
             if (h && rechecking) Diag.log(this, "Home found by re-check (was hidden: " + whyNow() + ")")
             IconRegistry.onHome = h
             IconRegistry.homeWhy = whyNow()
             IconRegistry.listener?.invoke()
+            updateMode()
             if (h) { handler.removeCallbacks(rc1); handler.removeCallbacks(rc2); queueScan() }   // home found: no re-check is needed any more
         }
     }
@@ -237,6 +276,7 @@ class IconFinderService : AccessibilityService() {
         // Window list changes carry no package name, so they are handled first.
         if (type == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
             homeFromWindows()?.let { setHome(it) }
+            updateMode()
             DragonService.instance?.resetHiddenBackoff()
             if (!IconRegistry.onHome || unreadableTop) scheduleRechecks()
             return
@@ -251,8 +291,10 @@ class IconFinderService : AccessibilityService() {
                 recentsEvtAt = System.currentTimeMillis()
             }
             lastWinPkg = pkg
+            launcherFront = pkg == launcher
             val hw = homeFromWindows()
             if (hw != null) setHome(hw) else if (!keeping) setHome(pkg == launcher && !recents)
+            updateMode()
             DragonService.instance?.resetHiddenBackoff()
             if (!IconRegistry.onHome || unreadableTop) scheduleRechecks()
         }
@@ -354,6 +396,7 @@ class IconFinderService : AccessibilityService() {
             IconRegistry.icons = found
             if (!IconRegistry.onHome) {
                 IconRegistry.onHome = true                         // the front window is the launcher and shows its icons: it is the home screen
+                updateMode()
                 if (rechecking) Diag.log(this, "Home found by re-check (was hidden: $whyBefore)")
             }
             IconRegistry.listener?.invoke()

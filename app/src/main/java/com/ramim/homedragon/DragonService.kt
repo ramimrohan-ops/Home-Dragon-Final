@@ -196,17 +196,25 @@ class DragonService : Service() {
         }
     }
 
+    /** Screen off or locked: tell the icon finder, which then listens in light mode. */
+    private fun setIdle(b: Boolean) {
+        if (IconRegistry.idle == b) return
+        IconRegistry.idle = b
+        IconRegistry.modeChanged?.invoke()
+    }
+
     /** One place that decides whether the frame loop runs. */
     private fun apply() {
         val v = view ?: return
+        if (!screenActive && liveActive()) {       // the unlock broadcast never came, but the phone is unlocked and awake
+            screenActive = true
+            Diag.log(this, "Unlock found by checking (no unlock broadcast)")
+        }
+        setIdle(!screenActive)
         if (appOpen) {                             // the app is open: only the preview boxes show a dragon
             v.visibility = View.GONE
             v.pause()
             return
-        }
-        if (!screenActive && liveActive()) {       // the unlock broadcast never came, but the phone is unlocked and awake
-            screenActive = true
-            Diag.log(this, "Unlock found by checking (no unlock broadcast)")
         }
         if (!screenActive) {                       // screen off or locked: stop everything at once
             v.visibility = View.GONE
@@ -241,6 +249,7 @@ class DragonService : Service() {
         handler.removeCallbacks(unlockPoll)
         handler.removeCallbacks(hiddenPoll)
         hiddenPollOn = false
+        setIdle(false)
         // Prefs.enabled is only switched off by the Stop button, so "still on" here means Android stopped the service.
         Diag.log(this, if (Prefs.enabled(this)) "Dragon service stopped by the system" else "Dragon service stopped by you")
         instance = null

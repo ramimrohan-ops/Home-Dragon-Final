@@ -13,7 +13,9 @@ object IconRegistry {
     var listener: (() -> Unit)? = null                  // always called on the main thread
     var swipeListener: (() -> Unit)? = null             // launcher page is scrolling sideways (main thread)
     @Volatile var homeWhy: String = ""                 // why the home screen was last judged hidden (for the health log)
-    var powerDialog: (() -> Boolean)? = null            // opens the phone's power menu (set by the icon finder, Android 12+)
+    @Volatile var idle: Boolean = false                // screen off or locked: set by the dragon service, the icon finder then runs in light mode
+    @Volatile var light: Boolean = false               // the icon finder is in light mode (window changes only), shown in the health card
+    var modeChanged: (() -> Unit)? = null               // asks the icon finder to pick light or full mode again (may be called from any thread)
     var recheck: (() -> Unit)? = null                   // asks the icon finder to look again at what is in front (the hidden-dragon poll)
 }
 
@@ -74,7 +76,6 @@ object Prefs {
     fun rows(c: Context) = sp(c).getInt("rows", 6)
     fun enabled(c: Context) = sp(c).getBoolean("enabled", false)
     fun welcomeSeen(c: Context) = sp(c).getBoolean("welcome_seen", false)         // the first-run "what the app asks for" page was closed once
-    fun restartAsked(c: Context) = sp(c).getBoolean("restart_asked", false)       // the restart pop-up was already shown once
 
     fun setChargeTenths(c: Context, v: Int) = sp(c).edit().putInt("charge", v).apply()
     fun setChargeQualityPct(c: Context, v: Int) = sp(c).edit().putInt("charge_quality", v).apply()
@@ -89,7 +90,6 @@ object Prefs {
     fun setA11yConsent(c: Context, v: Boolean) = sp(c).edit().putBoolean("a11y_consent", v).apply()
     fun setEnabled(c: Context, v: Boolean) = sp(c).edit().putBoolean("enabled", v).apply()
     fun setWelcomeSeen(c: Context, v: Boolean) = sp(c).edit().putBoolean("welcome_seen", v).apply()
-    fun setRestartAsked(c: Context, v: Boolean) = sp(c).edit().putBoolean("restart_asked", v).apply()
 
     /** Saved flame colours (hex list), the original blue ramp when nothing was saved. */
     fun flameColors(c: Context): IntArray {

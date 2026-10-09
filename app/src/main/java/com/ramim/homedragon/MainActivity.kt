@@ -612,6 +612,70 @@ class MainActivity : Activity() {
         }
     }
 
+    // ---------------------------------------------------------------- timeline (welcome page and icon finder steps)
+
+    private class TimelineStep(val circle: TextView, val body: LinearLayout)
+
+    private fun oval(fill: Int, stroke: Int = 0, dashed: Boolean = false) = GradientDrawable().apply {
+        setShape(GradientDrawable.OVAL)
+        setColor(fill)
+        if (stroke != 0) {
+            if (dashed) setStroke(dp(1), stroke, dp(3).toFloat(), dp(3).toFloat()) else setStroke(dp(1), stroke)
+        }
+    }
+
+    /** One step of a vertical timeline: a numbered circle, a thin line down to the next step, a title with a small tag, and one line of text. */
+    private fun timelineStep(
+        parent: LinearLayout, num: Int, title: String, desc: String, tag: String? = null, tagColor: Int = MUTED,
+        optional: Boolean = false, last: Boolean = false
+    ): TimelineStep {
+        val row = LinearLayout(this)
+        val rail = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL }
+        val circle = TextView(this).apply {
+            text = num.toString()
+            textSize = 14f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            if (optional) {
+                setTextColor(MUTED)
+                background = oval(CARD, MUTED, true)
+            } else {
+                setTextColor(Color.WHITE)
+                background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(TEAL, BLUE)).apply { setShape(GradientDrawable.OVAL) }
+            }
+        }
+        rail.addView(circle, LinearLayout.LayoutParams(dp(32), dp(32)))
+        if (!last) {
+            rail.addView(View(this).apply {
+                background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(Color.argb(150, 45, 212, 191), Color.argb(150, 59, 130, 246)))
+            }, LinearLayout.LayoutParams(dp(2), 0, 1f).apply { topMargin = dp(4); bottomMargin = dp(4) })
+        }
+        row.addView(rail, LinearLayout.LayoutParams(dp(32), ViewGroup.LayoutParams.MATCH_PARENT))
+
+        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), dp(5), 0, if (last) 0 else dp(22)) }
+        val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        head.addView(text(title, 15f, FG, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        if (tag != null) {
+            head.addView(text(tag, 10.5f, tagColor, true).apply {
+                setPadding(dp(8), dp(2), dp(8), dp(2))
+                background = shape(Color.TRANSPARENT, 10, STROKE)
+            })
+        }
+        body.addView(head)
+        body.addView(text(desc, 12.5f, MUTED).apply { setPadding(0, dp(3), 0, 0) })
+        row.addView(body, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        parent.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        return TimelineStep(circle, body)
+    }
+
+    private fun pillButton(label: String, onClick: () -> Unit) = text(label, 12.5f, Color.WHITE, true).apply {
+        gravity = Gravity.CENTER
+        setPadding(dp(16), dp(7), dp(16), dp(7))
+        background = gradient(TEAL, BLUE, 16)
+        isClickable = true
+        setOnClickListener { onClick() }
+    }
+
     // ---------------------------------------------------------------- welcome page and setup highlight
 
     private fun showWelcome() {
@@ -648,33 +712,16 @@ class MainActivity : Activity() {
         head.addView(titles, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         body.addView(head)
 
-        fun item(emoji: String, tint: String, title: String, desc: String) {
-            val card = LinearLayout(this).apply {
-                gravity = Gravity.CENTER_VERTICAL
-                background = shape(CARD, 16, STROKE)
-                setPadding(dp(12), dp(11), dp(14), dp(11))
-            }
-            card.addView(TextView(this).apply {
-                text = emoji
-                textSize = 18f
-                gravity = Gravity.CENTER
-                background = shape(Color.parseColor(tint), 20)
-            }, LinearLayout.LayoutParams(dp(40), dp(40)))
-            val t = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, 0, 0) }
-            t.addView(text(title, 14.5f, FG, true))
-            t.addView(text(desc, 12f, MUTED).apply { setPadding(0, dp(2), 0, 0) })
-            card.addView(t, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            body.addView(card, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10) })
-        }
-        item("\uD83E\uDE9F", "#1B3A5F", "Draw over apps", "Shows the dragon on your home screen.")
-        item("\uD83D\uDD0D", "#3A2D5F", "Icon finder", "Finds your icons. Reads positions only, never text.")
-        item("\uD83D\uDD0B", "#1E4A3A", "Background", "Keeps the dragon running with the screen off.")
-        item("\uD83D\uDCCA", "#5A3F1B", "Usage access", "Optional. Knows which app is in front.")
-        item("\uD83D\uDD14", "#5A3F1B", "Notification", "A small one, while the dragon runs.")
-        item("\uD83D\uDD04", "#4A2A3A", "One restart", "Once, at the end.")
+        val steps = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(4), dp(28), dp(4), 0) }
+        timelineStep(steps, 1, "\uD83D\uDD14  Notification", "A small one, while the dragon runs.", "Pop-up", BLUE)
+        timelineStep(steps, 2, "\uD83E\uDE9F  Draw over apps", "Shows the dragon on your home screen.", "Required", TEAL)
+        timelineStep(steps, 3, "\uD83D\uDD0D  Icon finder", "Finds your icons. Positions only, never text.", "Required", TEAL)
+        timelineStep(steps, 4, "\uD83D\uDD0B  Background", "Keeps it running with the screen off.", "Required", TEAL)
+        timelineStep(steps, 5, "\uD83D\uDCCA  Usage access", "Knows which app is in front.", "Optional", ORANGE, optional = true, last = true)
+        body.addView(steps)
         body.addView(text("\uD83D\uDD12  No internet. Nothing leaves your phone.", 12f, TEAL, true).apply {
             gravity = Gravity.CENTER
-            setPadding(0, dp(16), 0, dp(4))
+            setPadding(0, dp(24), 0, dp(4))
         })
 
         val scroller = ScrollView(this).apply { addView(body) }
@@ -806,7 +853,8 @@ class MainActivity : Activity() {
         if (Prefs.a11yConsent(this)) openAccessibilitySettings() else showA11yDisclosure()
     }
 
-    private var a11yHelp: android.app.AlertDialog? = null
+    private var a11yHelp: android.app.Dialog? = null
+    private var a11yTick: TextView? = null       // the circle of step 3 in the open help page
 
     /** Already on: just open Android's Accessibility screen (to switch it off). Not on yet: show the three steps first. */
     private fun openAccessibilitySettings() {
@@ -820,33 +868,40 @@ class MainActivity : Activity() {
     /**
      * Android blocks accessibility services of apps installed outside an app store ("restricted setting"). The menu item
      * "Allow restricted settings" only appears in App info after the switch was tapped once, so the order of the steps matters.
+     * Three steps on a timeline, each with its own button; the page stays open when you come back and closes itself once the switch is on.
      */
     private fun showA11yHelp() {
         a11yHelp?.dismiss()
         Diag.log(this, "Icon finder help shown")
-        val where = if (isSamsung()) "Accessibility > Installed apps" else "Accessibility"
-        val msg = "1. Tap Open Accessibility. In $where tap \"Home Dragon icon finder\", even if it is greyed out. " +
-            "Android may say it is a restricted setting.\n\n" +
-            "2. Come back here and tap Open App info. Tap the \u22EE menu (top right) > Allow restricted settings. " +
-            "The menu item only appears after step 1.\n\n" +
-            "3. Tap Open Accessibility again, tap \"Home Dragon icon finder\" and switch it on.\n\n" +
-            "If the switch is not greyed out, just do step 3."
-        val d = android.app.AlertDialog.Builder(this)
-            .setTitle("Turn on the icon finder")
-            .setMessage(msg)
-            .setPositiveButton("Open Accessibility", null)
-            .setNeutralButton("Open App info", null)
-            .setNegativeButton("Close", null)
-            .create()
-        d.setOnDismissListener { if (a11yHelp === d) a11yHelp = null }
-        d.show()
-        // set after show() so the buttons do not close the dialog: the steps stay on screen when you come back
-        d.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener { launchAccessibility() }
-        d.getButton(android.content.DialogInterface.BUTTON_NEUTRAL).setOnClickListener {
+        val dlg = android.app.Dialog(this, android.R.style.Theme_DeviceDefault_Dialog_NoActionBar)
+        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(18), dp(20), dp(20)) }
+        val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        head.addView(text("Turn on the icon finder", 18f, FG, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        head.addView(text("\u2715", 18f, MUTED, true).apply {
+            setPadding(dp(10), dp(4), 0, dp(4))
+            isClickable = true
+            setOnClickListener { dlg.dismiss() }
+        })
+        body.addView(head)
+        body.addView(text("Switch not greyed out? Go straight to step 3.", 12.5f, MUTED).apply { setPadding(0, dp(4), 0, dp(22)) })
+        fun btn() = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) }
+        val s1 = timelineStep(body, 1, "Tap the icon finder", "Accessibility \u203A Home Dragon icon finder. Android may say it is restricted.", "If greyed out")
+        s1.body.addView(pillButton("Open Accessibility") { launchAccessibility() }, btn())
+        val s2 = timelineStep(body, 2, "Allow restricted settings", "App info \u203A \u22EE menu (top right) \u203A Allow restricted settings. It only appears after step 1.", "If greyed out")
+        s2.body.addView(pillButton("Open App info") {
             try { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) } catch (_: Throwable) {}
-        }
-        d.getButton(android.content.DialogInterface.BUTTON_NEGATIVE).setOnClickListener { d.dismiss() }
-        a11yHelp = d
+        }, btn())
+        val s3 = timelineStep(body, 3, "Switch it on", "Accessibility \u203A Home Dragon icon finder \u203A On.", last = true)
+        s3.body.addView(pillButton("Open Accessibility") { launchAccessibility() }, btn())
+        a11yTick = s3.circle
+
+        dlg.setContentView(ScrollView(this).apply { addView(body) })
+        dlg.window?.setBackgroundDrawable(shape(CARD, 22, STROKE))
+        dlg.window?.setLayout((resources.displayMetrics.widthPixels * 0.92f).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT)
+        dlg.setCanceledOnTouchOutside(true)
+        dlg.setOnDismissListener { if (a11yHelp === dlg) { a11yHelp = null; a11yTick = null } }
+        a11yHelp = dlg
+        dlg.show()
     }
 
     private var disclosureShowing = false
@@ -878,24 +933,6 @@ class MainActivity : Activity() {
             .show()
     }
 
-    /** Shown once, when all three setup rows are On. An app cannot restart a phone itself, so "Restart now" opens the power menu. */
-    private fun showRestartAdvice() {
-        Prefs.setRestartAsked(this, true)
-        Diag.log(this, "Restart advice shown")
-        android.app.AlertDialog.Builder(this)
-            .setTitle("Restart your phone?")
-            .setMessage("Setup is finished. Restarting once lets the phone pick up the new battery and accessibility settings, so the dragon keeps running reliably.\n\n" +
-                "\"Restart now\" opens the power menu: tap Restart there.")
-            .setCancelable(true)
-            .setPositiveButton("Restart now") { _, _ ->
-                Diag.log(this, "Restart advice: restart now")
-                val opened = try { IconRegistry.powerDialog?.invoke() == true } catch (_: Throwable) { false }
-                if (!opened) Toast.makeText(this, "Hold the power button (or side key) and choose Restart.", Toast.LENGTH_LONG).show()
-            }
-            .setNegativeButton("Restart later") { _, _ -> Diag.log(this, "Restart advice: later") }
-            .show()
-    }
-
     private fun a11yEnabled(): Boolean {
         val me = ComponentName(this, IconFinderService::class.java).flattenToString()
         val enabled = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: ""
@@ -907,19 +944,22 @@ class MainActivity : Activity() {
         val pm = getSystemService(POWER_SERVICE) as PowerManager
         setupRows[0].update(overlay)
         setupRows[1].update(a11yEnabled())
-        if (a11yEnabled()) a11yHelp?.dismiss()      // switched on: the steps are no longer needed
+        if (a11yEnabled()) a11yHelp?.let { d ->      // switched on: tick step 3, then close the steps
+            a11yTick?.apply { text = "\u2713"; background = oval(GREEN) }
+            window.decorView.postDelayed({ d.dismiss() }, 900)
+        }
         val battery = pm.isIgnoringBatteryOptimizations(packageName)
         setupRows[2].update(battery)
         setupRows[3].update(Foreground.granted(this))       // optional: not part of "setup done"
         setupDone = overlay && a11yEnabled() && battery
         if (setupDone) stopHighlight()
-        if (setupDone && !Prefs.restartAsked(this)) showRestartAdvice()
 
         val running = DragonService.instance != null
         val finder = IconRegistry.serviceActive
         val sb = StringBuilder()
         sb.append("Dragon service : ").append(if (running) "running" else "NOT running").append('\n')
         sb.append("Icon finder    : ").append(if (finder) "connected" else if (a11yEnabled()) "switched on, not connected" else "off").append('\n')
+        sb.append("Icon finder mode: ").append(if (!finder) "-" else if (IconRegistry.light) "light" else "full").append('\n')
         sb.append("Usage access   : ").append(if (Foreground.granted(this)) "on" else "off").append('\n')
         sb.append("Auto-restarts  : ").append(Diag.restartCount(this)).append('\n')
         val ev = Diag.lines(this)
