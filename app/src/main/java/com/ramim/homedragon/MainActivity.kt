@@ -553,10 +553,47 @@ class MainActivity : Activity() {
         if (Prefs.a11yConsent(this)) openAccessibilitySettings() else showA11yDisclosure()
     }
 
+    private var a11yHelp: android.app.AlertDialog? = null
+
+    /** Already on: just open Android's Accessibility screen (to switch it off). Not on yet: show the three steps first. */
     private fun openAccessibilitySettings() {
-        startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        if (a11yEnabled()) launchAccessibility() else showA11yHelp()
+    }
+
+    private fun launchAccessibility() {
+        try { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) } catch (_: Throwable) {}
+    }
+
+    /**
+     * Android blocks accessibility services of apps installed outside an app store ("restricted setting"). The menu item
+     * "Allow restricted settings" only appears in App info after the switch was tapped once, so the order of the steps matters.
+     */
+    private fun showA11yHelp() {
+        a11yHelp?.dismiss()
+        Diag.log(this, "Icon finder help shown")
         val where = if (isSamsung()) "Accessibility > Installed apps" else "Accessibility"
-        Toast.makeText(this, "In $where, open Home Dragon icon finder and switch it on. If the switch is greyed out: Settings > Apps > Home Dragon > \u22EE > Allow restricted settings.", Toast.LENGTH_LONG).show()
+        val msg = "1. Tap Open Accessibility. In $where tap \"Home Dragon icon finder\", even if it is greyed out. " +
+            "Android may say it is a restricted setting.\n\n" +
+            "2. Come back here and tap Open App info. Tap the \u22EE menu (top right) > Allow restricted settings. " +
+            "The menu item only appears after step 1.\n\n" +
+            "3. Tap Open Accessibility again, tap \"Home Dragon icon finder\" and switch it on.\n\n" +
+            "If the switch is not greyed out, just do step 3."
+        val d = android.app.AlertDialog.Builder(this)
+            .setTitle("Turn on the icon finder")
+            .setMessage(msg)
+            .setPositiveButton("Open Accessibility", null)
+            .setNeutralButton("Open App info", null)
+            .setNegativeButton("Close", null)
+            .create()
+        d.setOnDismissListener { if (a11yHelp === d) a11yHelp = null }
+        d.show()
+        // set after show() so the buttons do not close the dialog: the steps stay on screen when you come back
+        d.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener { launchAccessibility() }
+        d.getButton(android.content.DialogInterface.BUTTON_NEUTRAL).setOnClickListener {
+            try { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) } catch (_: Throwable) {}
+        }
+        d.getButton(android.content.DialogInterface.BUTTON_NEGATIVE).setOnClickListener { d.dismiss() }
+        a11yHelp = d
     }
 
     private var disclosureShowing = false
@@ -617,6 +654,7 @@ class MainActivity : Activity() {
         val pm = getSystemService(POWER_SERVICE) as PowerManager
         setupRows[0].update(overlay)
         setupRows[1].update(a11yEnabled())
+        if (a11yEnabled()) a11yHelp?.dismiss()      // switched on: the steps are no longer needed
         val battery = pm.isIgnoringBatteryOptimizations(packageName)
         setupRows[2].update(battery)
         if (overlay && a11yEnabled() && battery && !Prefs.restartAsked(this)) showRestartAdvice()
