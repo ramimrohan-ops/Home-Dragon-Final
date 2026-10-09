@@ -69,6 +69,7 @@ object Prefs {
     fun cols(c: Context) = sp(c).getInt("cols", 4)
     fun rows(c: Context) = sp(c).getInt("rows", 6)
     fun enabled(c: Context) = sp(c).getBoolean("enabled", false)
+    fun welcomeSeen(c: Context) = sp(c).getBoolean("welcome_seen", false)         // the first-run "what the app asks for" page was closed once
     fun restartAsked(c: Context) = sp(c).getBoolean("restart_asked", false)       // the restart pop-up was already shown once
 
     fun setScalePct(c: Context, v: Int) = sp(c).edit().putInt("scale", v).apply()
@@ -81,6 +82,7 @@ object Prefs {
     fun setCols(c: Context, v: Int) = sp(c).edit().putInt("cols", v).apply()
     fun setRows(c: Context, v: Int) = sp(c).edit().putInt("rows", v).apply()
     fun setEnabled(c: Context, v: Boolean) = sp(c).edit().putBoolean("enabled", v).apply()
+    fun setWelcomeSeen(c: Context, v: Boolean) = sp(c).edit().putBoolean("welcome_seen", v).apply()
     fun setRestartAsked(c: Context, v: Boolean) = sp(c).edit().putBoolean("restart_asked", v).apply()
 
     /** Saved flame colours (hex list), the original blue ramp when nothing was saved. */

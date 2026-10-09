@@ -254,3 +254,8 @@ Once, when all three Setup rows (Draw over other apps, Icon finder, Background r
 
 ## v2.31 - icon finder help for "restricted setting"
 Android blocks accessibility services of apps installed outside an app store. The App info menu item "Allow restricted settings" only appears after the greyed-out switch has been tapped once. Tapping the Icon finder row (when it is not yet on) now shows the three steps in the right order, with **Open Accessibility** and **Open App info** buttons that keep the steps on screen. The dialog closes by itself once the icon finder is on. The app cannot grant the setting itself: Android requires the user to do it.
+
+## v2.4 - first-run page and Setup highlight
+- **"Before you start" page** (full screen, first open after installing): short cards for Draw over other apps (pop-up window), Icon finder (Accessibility, restricted setting), Background running (battery), Notification and One restart, plus a privacy line (no internet access, no data collected). It cannot appear during the install itself, because Android owns that screen. It is skipped when the three Setup rows are already On (e.g. after an update) and re-opens from the "What does it ask for?" link on the Setup card.
+- **Closing the page** (button or back) switches to the Dragon tab, scrolls to the Setup card and pulses an orange outline around the **whole** Setup card with a "Start here" label for about 5 seconds. It stops when you tap a row. While any row is not On, the card pulses briefly each time the app is opened. It only points; it never taps or enables anything.
+- The notification question now comes after the page is closed instead of on top of it.
