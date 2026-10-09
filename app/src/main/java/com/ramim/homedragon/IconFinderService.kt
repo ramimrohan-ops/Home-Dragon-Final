@@ -50,7 +50,7 @@ class IconFinderService : AccessibilityService() {
     override fun onUnbind(intent: Intent?): Boolean {
         Diag.log(this, "Icon finder disconnected")
         IconRegistry.powerDialog = null
-        handler.removeCallbacks(rc1); handler.removeCallbacks(rc2); handler.removeCallbacks(rc3)
+        handler.removeCallbacks(rc1); handler.removeCallbacks(rc2); handler.removeCallbacks(rc3); handler.removeCallbacks(graceRun)
         IconRegistry.recheck = null
         IconRegistry.serviceActive = false
         IconRegistry.icons = emptyList()
@@ -77,10 +77,72 @@ class IconFinderService : AccessibilityService() {
      * Returns null when the window list is unavailable.
      */
     private fun homeFromWindows(): Boolean? {
+        keeping = false
         val launcher = IconRegistry.launcherPkg ?: return null
         val p = topAppPackage() ?: return null
-        if (p.isEmpty()) return false                    // unreadable window on top (secure app): not home
+        if (p.isEmpty()) return decideUnreadable(launcher)   // unreadable window on top: do not just hide the dragon, see below
+        unreadableSince = 0L
+        lastUnreadLog = ""
         return p == launcher && !recents
+    }
+
+    private var keeping = false             // the last homeFromWindows() answer was "no change": keep what the dragon is doing
+    private var deciding = false            // guards against the scan below calling back into the decision
+    private var unreadableSince = 0L        // when the current unreadable window was first seen (0 = none)
+    private var lastIconsMs = 0L            // last time a scan found the home screen icons
+    private var lastWinPkg: String? = null  // package of the last window change event (it is known even when the window cannot be read)
+    private var lastUnreadLog = ""
+    private val graceRun = Runnable { refreshHome() }
+
+    private fun unreadableLog(msg: String) {
+        if (msg != lastUnreadLog) { lastUnreadLog = msg; Diag.log(this, msg) }
+    }
+
+    /**
+     * The top window cannot be read. This used to count as "not home" and the dragon faded out and paused. Now, in this order:
+     * 1. a fresh icon scan finds the home screen icons -> home, keep going;
+     * 2. the last window change event names a package: the launcher -> keep going, another app -> hide;
+     * 3. nothing says which app it is: keep what the dragon is doing for 5 seconds, then hide.
+     * Returns null for "no change".
+     */
+    private fun decideUnreadable(launcher: String): Boolean? {
+        if (deciding) { keeping = true; return null }
+        deciding = true
+        try {
+            val now = System.currentTimeMillis()
+            lastScan = now
+            scan(true)
+            if (lastIconsMs >= now) {
+                unreadableSince = 0L
+                unreadableLog("Unreadable window in front: the icon scan found the home screen, kept going")
+                return true
+            }
+            val wp = lastWinPkg
+            if (wp != null) {
+                unreadableSince = 0L
+                return if (wp == launcher) {
+                    unreadableLog("Unreadable window from the launcher in front: kept going")
+                    !recents
+                } else {
+                    unreadableLog("Unreadable window from $wp in front: hidden")
+                    false
+                }
+            }
+            if (unreadableSince == 0L) {
+                unreadableSince = now
+                handler.removeCallbacks(graceRun)
+                handler.postDelayed(graceRun, 5000L)
+            }
+            if (now - unreadableSince < 5000L) {
+                keeping = true
+                unreadableLog("Unreadable window in front: kept going for up to 5 s")
+                return null
+            }
+            unreadableLog("Unreadable window still in front after 5 s: hidden")
+            return false
+        } finally {
+            deciding = false
+        }
     }
 
     /** Package of the top-most application window (not keyboards, status bar, our overlay or picture-in-picture). null = unknown, "" = unreadable. */
@@ -103,7 +165,7 @@ class IconFinderService : AccessibilityService() {
         IconRegistry.onHome -> "home screen in front"
         recentsEvt -> "recents screen event"
         recentsNode -> "recents views or no icons seen"
-        else -> "another app or unreadable window in front"
+        else -> "another app in front, or an unreadable window that could not be placed"
     }
 
     private var rechecking = false                       // true while a re-check (not a normal event) is running: only used for the log
@@ -118,7 +180,11 @@ class IconFinderService : AccessibilityService() {
         val launcher = IconRegistry.launcherPkg ?: return
         var top = topAppPackage()
         if (top == null) top = try { rootInActiveWindow?.packageName?.toString() } catch (e: Exception) { null }
-        if (top != launcher) {                           // another app (or an unreadable window) is in front: nothing to look at
+        if (top == "") {                                 // unreadable window: decided by the scan, the window event or the 5 s wait
+            homeFromWindows()?.let { setHome(it) }
+            return
+        }
+        if (top != launcher) {                           // another app is in front: nothing to look at
             if (top != null) setHome(false)
             return
         }
@@ -175,7 +241,9 @@ class IconFinderService : AccessibilityService() {
                 recentsEvt = event.className?.let { it.contains("recent", true) || it.contains("overview", true) } == true
                 recentsEvtAt = System.currentTimeMillis()
             }
-            setHome(homeFromWindows() ?: (pkg == launcher && !recents))
+            lastWinPkg = pkg
+            val hw = homeFromWindows()
+            if (hw != null) setHome(hw) else if (!keeping) setHome(pkg == launcher && !recents)
             DragonService.instance?.resetHiddenBackoff()
             if (!IconRegistry.onHome) scheduleRechecks()
         }
@@ -273,6 +341,7 @@ class IconFinderService : AccessibilityService() {
         val changed = nowRecents != recentsNode || evtStale
         recentsNode = nowRecents
         if (found.size >= 4 && !sawRecents) {
+            lastIconsMs = System.currentTimeMillis()
             IconRegistry.icons = found
             if (!IconRegistry.onHome) {
                 IconRegistry.onHome = true                         // the front window is the launcher and shows its icons: it is the home screen

@@ -315,3 +315,11 @@ Android blocks accessibility services of apps installed outside an app store. Th
 - **Charge-up quality** now scales only the sparks and the imploding particles (the wave count is always one).
 - **One shared preview box** for Charge-up time, Charge-up quality and Charge-up wave thickness (it used to be one box per slider). Same rules: still while dragging, loops after release, stops about 5 seconds after the last touch of any of the three sliders. Caption: time, quality and wave.
 - **Sitting / Flying switch** in the top-left corner of that box. Tap to change the pose; the charge-up then plays twice in the new pose. Flying = hovering with the wings spread and flapping slowly, the wave follows the moving wing bones. The choice is remembered.
+
+## v3.4 - an unreadable window in front no longer hides the dragon
+- Before, a window the Icon finder could not read counted as "not the home screen": the dragon faded out and paused (log: "another app or unreadable window in front"). Now it is decided in this order:
+  1. a fresh icon scan finds the home screen icons -> home, the dragon keeps going;
+  2. the last window-change event names a package: the launcher -> keeps going, another app -> hidden (an app that blocks accessibility, such as a banking app, still hides it);
+  3. nothing says which app it is -> the dragon keeps doing what it was doing for 5 seconds, then hides if the window is still unreadable.
+- Screen off or locked, and the Home Dragon app being open, pause it as before.
+- New Log tab lines say which step decided, e.g. "Unreadable window in front: the icon scan found the home screen, kept going" or "Unreadable window from <package> in front: hidden".
