@@ -296,3 +296,10 @@ Android blocks accessibility services of apps installed outside an app store. Th
 
 ## v3.0 - mouth closes a little for the breath (includes everything from v2.9)
 - With Charge-up time on, the mouth is fully open during the charge-up, then closes smoothly to about 40% open (in about 0.2 s) when the breath starts, stays there for the whole breath, and closes completely at the end. Home screen and charge-up preview. The flame glow at the mouth keeps its size. With Charge-up time Off nothing changes.
+
+## v3.1 - charge-up gathers in the mouth, straight implosion, Charge-up quality slider
+- **Orb and imploding particles in the middle of the open mouth** (behind the teeth), not in the neck. The neck waves run on into the mouth. The orb follows how far the mouth is open.
+- **Imploding particles fall in straight lines**, no spiral. Each starts at rest on a wide circle around the orb and speeds up steadily toward its centre, with a straight streak behind it that is longer the faster it goes. 120 particles at 100% quality, a little bigger and brighter than before, with one shared dark halo behind the swarm so they show on bright wallpapers.
+- **New slider "Charge-up quality"** (10..100%, default 100%, with its own preview box) under Charge-up time. One slider scales three things together: sparks at a time (12 at 100%, 6 at 50%, 1 at 10%), imploding particles (120 / 60 / 12) and waves on each bone (about 3 / 2 / 1). The Particles slider no longer changes the charge-up. With Charge-up time Off the quality slider does nothing.
+- **No fire in the mouth before the breath:** the flame glow inside the mouth (and the flare in the preview) only appears when the breath starts. During the charge-up the mouth shows only the charge building.
+- **Mouth:** fully open through the charge-up and the whole breath (this replaces the 40% of v3.0), then it closes slowly (about 0.8 s). With Charge-up time Off nothing changes.

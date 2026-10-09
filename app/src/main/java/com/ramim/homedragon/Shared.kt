@@ -60,6 +60,7 @@ object Prefs {
     private fun snap(v: Int, lo: Int, hi: Int) = (((v + 5) / 10) * 10).coerceIn(lo, hi)
 
     fun chargeTenths(c: Context) = (((sp(c).getInt("charge", 15) + 2) / 5) * 5).coerceIn(0, 30)   // fire charge-up time in tenths of a second, 0 = off
+    fun chargeQualityPct(c: Context) = snap(sp(c).getInt("charge_quality", 100), 10, 100)   // charge-up sparks, particles and waves, 10..100
     fun scalePct(c: Context) = snap(sp(c).getInt("scale", 100), 50, 150)          // dragon size, 50..150
     fun speedPct(c: Context) = snap(sp(c).getInt("speed", 100), 50, 150)          // dragon speed, 50..150
     fun qualityPct(c: Context) = snap(sp(c).getInt("quality", 100), 10, 100)      // frame rate, 10..100
@@ -74,6 +75,7 @@ object Prefs {
     fun restartAsked(c: Context) = sp(c).getBoolean("restart_asked", false)       // the restart pop-up was already shown once
 
     fun setChargeTenths(c: Context, v: Int) = sp(c).edit().putInt("charge", v).apply()
+    fun setChargeQualityPct(c: Context, v: Int) = sp(c).edit().putInt("charge_quality", v).apply()
     fun setScalePct(c: Context, v: Int) = sp(c).edit().putInt("scale", v).apply()
     fun setSpeedPct(c: Context, v: Int) = sp(c).edit().putInt("speed", v).apply()
     fun setQualityPct(c: Context, v: Int) = sp(c).edit().putInt("quality", v).apply()

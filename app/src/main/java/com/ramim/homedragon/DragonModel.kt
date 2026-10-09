@@ -41,6 +41,8 @@ class DragonModel {
         var pitch = 0f
         var head = 0.28f       // absolute head angle
         var mouth = 0f
+        /** Strength of the flame glow inside the open mouth; negative = follow [mouth] (the default). The charge-up keeps it at 0 until the breath starts. */
+        var mouthGlow = -1f
         var eye = 1f
         var time = 0f
         var wingPh = 0f
@@ -665,10 +667,11 @@ class DragonModel {
             val tx = 9f + q * 4.2f; val hgt = if (q == 6) 5f else 3.4f
             tri(c, tx, 4.6f, tx + 2.3f, 4.6f, tx + 1.1f, 4.6f + hgt, fill)
         }
-        if (mouth > 0.1f) {
+        val gm = if (s.mouthGlow >= 0f) s.mouthGlow else mouth
+        if (gm > 0.1f) {
             glowPaint.shader = RadialGradient(30f, 5f, 14f,
-                intArrayOf(Color.argb((230 * mouth).toInt(), Color.red(mgCore), Color.green(mgCore), Color.blue(mgCore)),
-                    Color.argb((140 * mouth).toInt(), Color.red(mgMid), Color.green(mgMid), Color.blue(mgMid)),
+                intArrayOf(Color.argb((230 * gm).toInt(), Color.red(mgCore), Color.green(mgCore), Color.blue(mgCore)),
+                    Color.argb((140 * gm).toInt(), Color.red(mgMid), Color.green(mgMid), Color.blue(mgMid)),
                     Color.argb(0, Color.red(mgEdge), Color.green(mgEdge), Color.blue(mgEdge))),
                 floatArrayOf(0f, 0.4f, 1f), Shader.TileMode.CLAMP)
             c.drawRect(10f, -10f, 50f, 20f, glowPaint)

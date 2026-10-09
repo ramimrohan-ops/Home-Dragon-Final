@@ -54,6 +54,7 @@ class MainActivity : Activity() {
     private val sliders = ArrayList<Slider>()
     private var flamePreview: PreviewView? = null
     private var chargePreview: PreviewView? = null
+    private var chargeQPreview: PreviewView? = null
     private var logTab = false
     private lateinit var scrollView: ScrollView
     private lateinit var pageMainView: LinearLayout
@@ -348,12 +349,20 @@ class MainActivity : Activity() {
             step = 5, previews = listOf(chargePrev), previewDp = 170, def = 15,
             fmt = { if (it == 0) "Off" else String.format("%.1f s", it / 10f) }
         )
-        sliders.addAll(listOf(quality, particles, size, speed, charge))
+        val chargeQPrev = PreviewView(this, PreviewView.CHARGEQ)
+        chargeQPreview = chargeQPrev
+        val chargeQ = Slider(
+            "Charge-up quality", "How many sparks, particles and waves. Lower = lighter.",
+            10, 100, Prefs.chargeQualityPct(this), { Prefs.setChargeQualityPct(this, it) }, { DragonService.instance?.view?.reloadSettings() },
+            step = 10, previews = listOf(chargeQPrev), previewDp = 170, def = 100
+        )
+        sliders.addAll(listOf(quality, particles, size, speed, charge, chargeQ))
         settings.addView(quality.view)
         settings.addView(divider()); settings.addView(particles.view)
         settings.addView(divider()); settings.addView(size.view)
         settings.addView(divider()); settings.addView(speed.view)
         settings.addView(divider()); settings.addView(charge.view)
+        settings.addView(divider()); settings.addView(chargeQ.view)
         col.addView(settings)
 
         // visual: flame colours (live preview + picker, blue is the default) and the two transparency sliders
@@ -370,7 +379,7 @@ class MainActivity : Activity() {
         val picker = FlamePicker(this) { cols, done ->
             Prefs.setFlameColors(this, cols)
             fPrev.reloadFlame()
-            chargePreview?.reloadFlame()          // the charge-up preview takes the same colours at once
+            chargePreview?.reloadFlame(); chargeQPreview?.reloadFlame()          // the charge-up preview takes the same colours at once
             fPrev.playLoops(2)                       // plays two loops of fire in the new colours, then pauses
             if (done) DragonService.instance?.view?.reloadFlame()
         }
@@ -492,7 +501,7 @@ class MainActivity : Activity() {
             tabLog.setTextColor(if (log) FG else MUTED)
             try {
                 if (!tabsReady) return
-                if (log) { sliders.forEach { it.release() }; flamePreview?.stop(); refresh() } else { flamePreview?.showStill(); chargePreview?.reloadFlame() }
+                if (log) { sliders.forEach { it.release() }; flamePreview?.stop(); refresh() } else { flamePreview?.showStill(); chargePreview?.reloadFlame(); chargeQPreview?.reloadFlame() }
             } catch (_: Throwable) {
             }
         }
@@ -732,7 +741,7 @@ class MainActivity : Activity() {
         })
         DragonService.appOpen = true
         DragonService.instance?.refreshHold()
-        try { if (!logTab) { flamePreview?.showStill(); chargePreview?.reloadFlame() } } catch (_: Throwable) {}
+        try { if (!logTab) { flamePreview?.showStill(); chargePreview?.reloadFlame(); chargeQPreview?.reloadFlame() } } catch (_: Throwable) {}
         // the icon finder was switched on in Android's settings before the user agreed here: show the disclosure now
         if (intent?.getBooleanExtra("a11y_disclosure", false) == true) {
             intent.removeExtra("a11y_disclosure")

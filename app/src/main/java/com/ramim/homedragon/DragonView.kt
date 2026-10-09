@@ -92,6 +92,7 @@ class DragonView(context: Context) : View(context) {
     private var acc = 0f
     private var walkTo = 0f
     private var fireDur = 1.7f
+    private var chargeQ = 1f            // Charge-up quality slider: scales the sparks, imploding particles and waves of the charge-up
     private var chargeT = 1.5f            // charge-up before every fire breath (seconds, "Charge-up time" slider, 0 = off): tail tip -> spine spikes -> neck -> orb in the mouth
     private val chB = FloatArray(16)
     private var fireFt = -1f              // time since the breath itself started (negative while charging)
@@ -508,6 +509,7 @@ class DragonView(context: Context) : View(context) {
         q = clampF(Prefs.qualityPct(context) / 100f, 0.1f, 1f)
         pq = clampF(Prefs.particlePct(context) / 100f, 0.1f, 1f)
         chargeT = Prefs.chargeTenths(context) / 10f
+        chargeQ = clampF(Prefs.chargeQualityPct(context) / 100f, 0.1f, 1f)
         spdMul = clampF(Prefs.speedPct(context) / 100f, 0.5f, 1.5f)
         // transparency: 0 = solid .. 100 = barely visible; the model draws the whole dragon as one fading layer
         model.setTransparency(Prefs.transparencyPct(context), Prefs.wingTransPct(context))
@@ -1008,8 +1010,9 @@ class DragonView(context: Context) : View(context) {
                 val ft = t - chargeT
                 fireFt = ft
                 st.mouth = if (ft < 0f) smooth(0f, min(0.25f, chargeT), t)
-                    else if (chargeT > 0.05f) min(clampF((fireDur - ft) / 0.25f, 0f, 1f), 1f - 0.6f * smooth(0f, 0.2f, ft))   // closes to 40% for the breath
+                    else if (chargeT > 0.05f) 1f                                       // fully open for the whole breath, closes slowly afterwards
                     else clampF(min(0.5f + ft / 0.5f, (fireDur - ft) / 0.25f), 0f, 1f)
+                st.mouthGlow = if (ft < 0f && chargeT > 0.05f) 0f else -1f          // no fire in the mouth until the breath starts
                 model.headLocal(st.sp, st.walk, hl); val hx = hl[0]; val hy = hl[1]
                 val ang = atan2(c.cy - (st.y + (hy + st.bob) * ds), max(8f, abs(c.cx - (st.x + st.face * hx * ds))))
                 headGoal = clampF(ang, -0.6f, 1.0f)
@@ -1020,10 +1023,10 @@ class DragonView(context: Context) : View(context) {
                     if (Random.nextFloat() < dt * 14f) addSpark(mp[0], mp[1], atan2(c.cy - mp[1], c.cx - mp[0]) + rnd(-0.5f, 0.5f), rnd(180f, 420f) * sc)
                     c.burn = min(1f, c.burn + dt * 0.62f * (size / max(size, c.r.width() * 0.5f))); c.heat = min(1f, c.heat + dt * 4f); c.ember = 1f
                 }
-                if (ft >= fireDur) { st.mouth = 0f; fireFt = -1f; val cb = then; then = null; cb?.invoke() }
+                if (ft >= fireDur) { if (chargeT <= 0.05f) st.mouth = 0f; fireFt = -1f; val cb = then; then = null; cb?.invoke() }
             }
         }
-        if (!firing) st.mouth = max(0f, st.mouth - dt * 6f)
+        if (!firing) { st.mouth = max(0f, st.mouth - dt * (if (chargeT > 0.05f) 1.3f else 6f)); st.mouthGlow = -1f }   // closes slowly after a charged breath
         // electric arcs on the spine: full strength during the whole breath, then fading to zero in about a second
         if (firing && fireFt >= 0f && chargeT > 0.05f) chSpark = 1f else if (chSpark > 0f) chSpark = max(0f, chSpark - rdt)
         if (mode != Mode.SCRATCH) st.scratch = max(0f, st.scratch - dt * 4f)
@@ -1253,7 +1256,7 @@ class DragonView(context: Context) : View(context) {
         val fe = if (firing) fireFt - fireDur else 1f - chSpark
         val ft = if (firing) fireFt else fireDur + fe
         chargeFx.draw(st, ds, time, chargeT, if (firing) clampF(t / chargeT, 0f, 1f) else 1f, ft, fe, fireDur,
-            firing && fireFt < 0f, pq)
+            firing && fireFt < 0f, chargeQ)
         fxCanvas = null
     }
 

@@ -44,6 +44,7 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
         const val FLYING = 3
         const val SEETHROUGH = 4
         const val CHARGE = 5
+        const val CHARGEQ = 6                     // Charge-up quality preview: the same charge-up, at the quality of the slider
         private const val FLY_W = 256f               // flying pose: width in model units
         private const val FLY_H = 250f               // flying pose: height in model units
         private const val FLY_CX = -31.5f            // flying pose: horizontal centre
@@ -121,7 +122,7 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
         flameCols = cols
         sprites = Array(6) { makeSprite(ramp(it / 5f)) }
         gradInts = IntArray(8) { ramp(it / 7f * 0.85f) }
-        if (!running && kind == CHARGE && geomReady) warm()
+        if (!running && isCharge && geomReady) warm()
         if (FlameColors.isDefault(cols)) model.setFlameGlow(Color.rgb(220, 245, 255), Color.rgb(70, 170, 255), Color.rgb(30, 80, 255))
         else model.setFlameGlow(ramp(0f), ramp(0.18f), ramp(0.5f))
         invalidate()
@@ -161,12 +162,22 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
     private fun rate(): Float = when (kind) {
         QUALITY -> min(30f, max(5f, hz * pct / 100f))      // sitting still: 30 fps at most
         FLYING -> max(5f, hz * pct / 100f)
-        CHARGE -> min(60f, hz)
+        CHARGE, CHARGEQ -> min(60f, hz)
         else -> hz
     }
 
-    private val fireKind get() = kind == PARTICLES || kind == CHARGE
-    private val chargeS get() = if (kind == CHARGE) pct / 10f else 0f          // charge-up seconds (CHARGE preview only)
+    private val isCharge get() = kind == CHARGE || kind == CHARGEQ
+    private val fireKind get() = kind == PARTICLES || isCharge
+    // charge-up seconds: the Charge-up time preview uses its own slider value, the quality preview the saved Charge-up time (1.5 s when that is Off)
+    private var qTime = 1.5f
+    private var qPct = 100
+    private val chargeS get() = when (kind) { CHARGE -> pct / 10f; CHARGEQ -> qTime; else -> 0f }
+    private val chargeQ get() = (if (kind == CHARGEQ) pct else qPct) / 100f
+    private fun loadCharge() {
+        val t = Prefs.chargeTenths(context)
+        qTime = if (t > 0) t / 10f else 1.5f
+        qPct = Prefs.chargeQualityPct(context)
+    }
 
     fun setValue(v: Int) {
         if (v == pct) return
@@ -198,12 +209,13 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
     /** The slider is being touched. The charge-up preview holds a still picture, every other preview starts moving. */
     fun start() {
         touch()
-        if (kind == CHARGE) { halt(); return }
+        if (isCharge) { halt(); return }
         beginAnim()
     }
 
     private fun beginAnim() {
         if (running) return
+        loadCharge()
         running = true
         reloadFlame()
         lastNs = 0L; dueNs = 0L
@@ -213,7 +225,7 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
     /** The slider was let go. The charge-up preview now plays on a loop from the start; the others just keep looping. */
     fun onSliderUp() {
         touch()
-        if (kind == CHARGE && geomReady) {
+        if (isCharge && geomReady) {
             nf = 0; ns = 0; acc = 0f; heat = 0f; mouth = 0f; cyc = 0f
             beginAnim()
         }
@@ -244,7 +256,7 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
             running = false
             Choreographer.getInstance().removeFrameCallback(callback)
         }
-        if (kind == CHARGE) warm()                  // hold a clear still picture of the charge
+        if (isCharge) warm()                  // hold a clear still picture of the charge
         invalidate()
     }
 
@@ -272,7 +284,7 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
             leftRect.set(0f, 0f, w.toFloat(), h.toFloat())
             geomReady = true
         }
-        if (kind == CHARGE && w > 0 && h > 0) {
+        if (isCharge && w > 0 && h > 0) {
             geomReady = true
             layoutChargeDragon()
             warm()
@@ -329,6 +341,7 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
     /** Run the fire for a moment so a still picture already shows a flame in flight. */
     private fun warm() {
         if (!geomReady) return
+        loadCharge()
         nf = 0; ns = 0; acc = 0f; heat = 0f; mouth = 0f; cyc = 0.45f
         if (chargeS > 0.05f) {                      // still picture of the charge: the orb is gathering in the mouth
             cyc = 0.3f + 0.88f * chargeS; mouth = 1f
@@ -339,16 +352,16 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
 
     private fun step(dt: Float) {
         val off = chargeS                           // the breath starts this much later (0 for the Particles preview)
-        if (kind == CHARGE) layoutChargeDragon()
+        if (isCharge) layoutChargeDragon()
         cyc += dt
         while (cyc >= CYCLE + off) { cyc -= CYCLE + off; if (loopsLeft > 0) loopsLeft--; if (stopReq) wrapStop = true }
         val firing = cyc in (0.45f + off)..(2.1f + off)
-        // fully open from the start of the charge-up, 40% open during the breath, closed at its end
-        val mouthGoal = if (cyc in 0.3f..(2.25f + off)) (if (off > 0.05f && cyc >= 0.3f + off) 0.4f else 1f) else 0f
-        mouth += (mouthGoal - mouth) * min(1f, dt * 12f)
+        // fully open from the start of the charge-up to the end of the breath, then closing slowly
+        val mouthGoal = if (cyc in 0.3f..(2.25f + off)) 1f else 0f
+        mouth += (mouthGoal - mouth) * min(1f, dt * (if (mouthGoal < mouth && off > 0.05f) 4f else 12f))
         heat = if (firing && cyc > 0.7f + off) min(1f, heat + dt * 2.2f) else max(0f, heat - dt * 0.8f)
 
-        val q = if (kind == CHARGE) 1f else pct / 100f
+        val q = if (isCharge) 1f else pct / 100f
         val capF = min(MAXF, (70 + 130 * q).toInt())
         val capS = min(MAXS, (30 + 60 * q).toInt())
 
@@ -365,7 +378,7 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
             fage[i] += dt
             if (fage[i] >= flife[i]) {
                 // impact: a few sparks fly off the icon
-                if (kind != CHARGE && rnd() < 0.5f && ns < capS) spawnSpark(fx[i], fy[i])
+                if (!isCharge && rnd() < 0.5f && ns < capS) spawnSpark(fx[i], fy[i])
                 nf--
                 fx[i] = fx[nf]; fy[i] = fy[nf]; fvx[i] = fvx[nf]; fvy[i] = fvy[nf]
                 fage[i] = fage[nf]; flife[i] = flife[nf]; fsz[i] = fsz[nf]; fph[i] = fph[nf]
@@ -458,7 +471,7 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
             QUALITY -> drawFps(c, w, h, false)
             FLYING -> drawFps(c, w, h, true)
             SEETHROUGH -> drawSeeThrough(c, w, h)
-            CHARGE -> drawChargeScene(c, w, h)
+            CHARGE, CHARGEQ -> drawChargeScene(c, w, h)
             else -> drawParticles(c, w, h)
         }
         c.restore()
@@ -610,6 +623,7 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
         val ds = min(w * 0.46f / MODEL_W, (base - dp(8f)) / MODEL_H)
         sit(st, t)
         st.mouth = mouth
+        st.mouthGlow = if (chargeS > 0.05f) (if (cyc >= 0.3f + chargeS) mouth else 0f) else -1f     // no fire in the mouth until the breath starts
         st.ds = ds
         st.x = dp(10f) - (MODEL_CX - MODEL_W * 0.5f) * ds
         st.y = base
@@ -634,15 +648,14 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
             val sz = fsz[i] * (0.6f + a * 0.9f)
             sprite(c, (a * 5.99f).toInt(), fx[i], fy[i], sz, (1f - a).pow(0.7f))
         }
-        if (mouth > 0.3f) {
-            val mf = min(1f, mouth * 2.2f)
-            sprite(c, 1, mx, my, dp(13f) * mf, 0.8f * mf)
-            sprite(c, 0, mx, my, dp(6f) * mf, 0.9f * mf)
+        if (mouth > 0.05f && (chargeS <= 0.05f || cyc >= 0.3f + chargeS)) {       // the mouth flare only once the breath has started
+            sprite(c, 1, mx, my, dp(13f) * mouth, 0.8f * mouth)
+            sprite(c, 0, mx, my, dp(6f) * mouth, 0.9f * mouth)
         }
         textFill.textSize = dp(10.5f); textFill.color = Color.parseColor("#B8C6E4")
         textFill.textAlign = Paint.Align.CENTER
         textFill.setShadowLayer(dp(3f), 0f, dp(1f), Color.argb(200, 0, 0, 0))
-        c.drawText(if (chargeS <= 0.05f) "charge-up: off" else "charge-up: " + String.format("%.1f", chargeS) + " s", w / 2f, h - dp(8f), textFill)
+        c.drawText(if (kind == CHARGEQ) "charge-up quality: $pct%" else if (chargeS <= 0.05f) "charge-up: off" else "charge-up: " + String.format("%.1f", chargeS) + " s", w / 2f, h - dp(8f), textFill)
         textFill.setShadowLayer(0f, 0f, 0f, 0)
         textFill.textAlign = Paint.Align.CENTER
     }
@@ -675,7 +688,7 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
         // the breath lasts from 0.3 + off to 2.25 + off; after it everything fades out in one second
         val fireDur = 1.95f
         fxCanvas = c
-        chargeFx.draw(st, st.ds, t, off, u, ft, ft - fireDur, fireDur, ft < 0f, 1f)
+        chargeFx.draw(st, st.ds, t, off, u, ft, ft - fireDur, fireDur, ft < 0f, chargeQ)
         fxCanvas = null
     }
 
