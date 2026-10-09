@@ -128,6 +128,10 @@ class DragonModel {
     private var membraneAlpha = 1f
     private var bodyRel = 1f
 
+    // colours of the glow inside the open mouth: the flame colours chosen in the app (default = the original blue)
+    private var mgCore = Color.rgb(220, 245, 255); private var mgMid = Color.rgb(70, 170, 255); private var mgEdge = Color.rgb(30, 80, 255)
+    fun setFlameGlow(core: Int, mid: Int, edge: Int) { mgCore = core; mgMid = mid; mgEdge = edge }
+
     /**
      * Transparency sliders: 0 = solid, 100 = barely visible (10% left). Body covers everything but the wing skin,
      * wing covers only the thin skin between the wing bones. The two work independently.
@@ -641,7 +645,9 @@ class DragonModel {
         }
         if (mouth > 0.1f) {
             glowPaint.shader = RadialGradient(30f, 5f, 14f,
-                intArrayOf(Color.argb((230 * mouth).toInt(), 220, 245, 255), Color.argb((140 * mouth).toInt(), 70, 170, 255), Color.argb(0, 30, 80, 255)),
+                intArrayOf(Color.argb((230 * mouth).toInt(), Color.red(mgCore), Color.green(mgCore), Color.blue(mgCore)),
+                    Color.argb((140 * mouth).toInt(), Color.red(mgMid), Color.green(mgMid), Color.blue(mgMid)),
+                    Color.argb(0, Color.red(mgEdge), Color.green(mgEdge), Color.blue(mgEdge))),
                 floatArrayOf(0f, 0.4f, 1f), Shader.TileMode.CLAMP)
             c.drawRect(10f, -10f, 50f, 20f, glowPaint)
             glowPaint.shader = null

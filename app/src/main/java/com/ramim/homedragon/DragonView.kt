@@ -92,7 +92,8 @@ class DragonView(context: Context) : View(context) {
     private var acc = 0f
     private var walkTo = 0f
     private var fireDur = 1.7f
-    private val CHARGE_T = 2.0f           // charge-up before every fire breath: tail tip -> spine spikes -> neck -> orb in the mouth
+    private var chargeT = 1.5f            // charge-up before every fire breath (seconds, "Charge-up time" slider, 0 = off): tail tip -> spine spikes -> neck -> orb in the mouth
+    private val chB = FloatArray(16)
     private var fireFt = -1f              // time since the breath itself started (negative while charging)
     private val cbx = FloatArray(16); private val cby = FloatArray(16); private val ctx = FloatArray(16); private val cty = FloatArray(16); private val cfr = FloatArray(16)
     private val orbP = FloatArray(2)
@@ -135,6 +136,7 @@ class DragonView(context: Context) : View(context) {
     private val spritePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val plusPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply { blendMode = BlendMode.PLUS }
     private val sparkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; blendMode = BlendMode.PLUS }
+    private val haloPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)     // normal blend: dark soft halo behind the charge-up glow
     private val dest = RectF()
     private val clip = Path()
 
@@ -233,6 +235,10 @@ class DragonView(context: Context) : View(context) {
     private var sCyan = glow(95, 214, 255)
     private var sBlue = glow(48, 110, 255)
     private val sBlack = glow(0, 0, 0)
+    private var sHalo = glow(14, 10, 60)
+    // charge-up colours (the flame colours; default = the original blue)
+    private var chCore = Color.rgb(238, 249, 255)
+    private var chNear = Color.rgb(95, 214, 255)
     // wispy flame particles, two noise variants per colour stage
     private var fCore = Array(2) { flameSprite(238, 249, 255, 11 + it * 5) }
     // one white flame sprite per variant, tinted along a smooth colour ramp with a colour filter
@@ -288,6 +294,8 @@ class DragonView(context: Context) : View(context) {
         ramp = Array(16) { k -> PorterDuffColorFilter(FlameColors.at(cols, k / 15f * 100f), PorterDuff.Mode.SRC_IN) }
         if (FlameColors.isDefault(cols)) {
             sCore = glow(238, 249, 255); sCyan = glow(95, 214, 255); sBlue = glow(48, 110, 255)
+            sHalo = glow(14, 10, 60); chCore = Color.rgb(238, 249, 255); chNear = Color.rgb(95, 214, 255)
+            model.setFlameGlow(Color.rgb(220, 245, 255), Color.rgb(70, 170, 255), Color.rgb(30, 80, 255))
             fCore = Array(2) { flameSprite(238, 249, 255, 11 + it * 5) }
             smkBlue = Array(2) { puff(70, 120, 200, 0.34f, 21 + it * 4) }
         } else {
@@ -296,6 +304,10 @@ class DragonView(context: Context) : View(context) {
             sCore = glow(Color.red(core), Color.green(core), Color.blue(core))
             sCyan = glow(Color.red(near), Color.green(near), Color.blue(near))
             sBlue = glow(Color.red(mid), Color.green(mid), Color.blue(mid))
+            val edge = FlameColors.at(cols, 100f)
+            sHalo = glow(Color.red(edge) * 2 / 5, Color.green(edge) * 2 / 5, Color.blue(edge) * 2 / 5)
+            chCore = core; chNear = near
+            model.setFlameGlow(core, near, mid)
             fCore = Array(2) { flameSprite(Color.red(core), Color.green(core), Color.blue(core), 11 + it * 5) }
             val sm = FlameColors.lighten(mid, 0.1f)
             smkBlue = Array(2) { puff(Color.red(sm) * 3 / 4, Color.green(sm) * 3 / 4, Color.blue(sm) * 3 / 4, 0.34f, 21 + it * 4) }
@@ -486,6 +498,7 @@ class DragonView(context: Context) : View(context) {
     private fun loadSettings() {
         q = clampF(Prefs.qualityPct(context) / 100f, 0.1f, 1f)
         pq = clampF(Prefs.particlePct(context) / 100f, 0.1f, 1f)
+        chargeT = Prefs.chargeTenths(context) / 10f
         spdMul = clampF(Prefs.speedPct(context) / 100f, 0.5f, 1.5f)
         // transparency: 0 = solid .. 100 = barely visible; the model draws the whole dragon as one fading layer
         model.setTransparency(Prefs.transparencyPct(context), Prefs.wingTransPct(context))
@@ -962,12 +975,12 @@ class DragonView(context: Context) : View(context) {
             }
             Mode.FIRE -> {
                 firing = true
-                t += dt
+                t += if (t < chargeT) rdt else dt       // the charge-up runs in real seconds, whatever the dragon speed
                 val c = ic(target)
                 // charge-up first (see drawCharge), then the breath; the mouth opens halfway while the orb grows
-                val ft = t - CHARGE_T
+                val ft = t - chargeT
                 fireFt = ft
-                st.mouth = if (ft < 0f) 0.5f * smooth(CHARGE_T - 0.5f, CHARGE_T, t) else clampF(min(0.5f + ft / 0.5f, (fireDur - ft) / 0.25f), 0f, 1f)
+                st.mouth = if (ft < 0f) 0.5f * smooth(chargeT * 0.7f, chargeT, t) else clampF(min(0.5f + ft / 0.5f, (fireDur - ft) / 0.25f), 0f, 1f)
                 model.headLocal(st.sp, st.walk, hl); val hx = hl[0]; val hy = hl[1]
                 val ang = atan2(c.cy - (st.y + (hy + st.bob) * ds), max(8f, abs(c.cx - (st.x + st.face * hx * ds))))
                 headGoal = clampF(ang, -0.6f, 1.0f)
@@ -1176,52 +1189,108 @@ class DragonView(context: Context) : View(context) {
         }
     }
 
-    /** Fire charge-up: a glow runs from the tail tip along the spine spikes, up the neck and gathers into an orb in the mouth. */
+    private fun a255(a: Float) = (clampF(a, 0f, 1f) * 255f).toInt()
+
+    /**
+     * Fire charge-up (Godzilla style): a bright wave runs from the tail tip along the spine spikes up to the head, the spikes keep glowing
+     * and flicker faster as it builds, the neck feeds the mouth, sparks and rings are pulled into an orb in the mouth, and at the moment
+     * of the breath it flashes and sends out a ring. All colours come from the flame colours chosen in the app. A dark soft halo sits
+     * behind every glow so it stays visible on bright wallpapers. The length is the "Charge-up time" slider.
+     */
     private fun drawCharge(c: Canvas) {
-        val amt = if (fireFt < 0f) smooth(0f, 0.2f, t) else 1f - smooth(0f, 0.35f, fireFt)
+        if (chargeT <= 0.05f) return
+        val u = clampF(t / chargeT, 0f, 1f)
+        if (fireFt >= 0.45f) return
+        val amt = if (fireFt < 0f) smooth(0f, 0.1f, u) else 1f - smooth(0.1f, 0.45f, fireFt)
         if (amt <= 0.01f) return
-        val fw = clampF((t - 0.1f) / (CHARGE_T - 0.6f), 0f, 1f) * 0.95f   // position of the wave front along the spine (1.4 s)
-        val gt = clampF((t - (CHARGE_T - 0.5f)) / 0.5f, 0f, 1f)           // gathering into the mouth (last 0.5 s)
+        val pw = 0.75f + 0.25f * clampF(chargeT / 1.5f, 0f, 1.6f)          // longer charge = bigger, brighter finish
+        val build = 0.5f + 0.5f * u
+        val fw = clampF(u / 0.7f, 0f, 1f) * 0.97f                          // wave front along the spine (first 70% of the time)
+        val gt = clampF((u - 0.6f) / 0.4f, 0f, 1f)                         // gathering into the mouth (last 40%)
+        val rate = 14f + 26f * u                                            // flicker speeds up while charging
         val n = model.chargePoints(st, cbx, cby, ctx, cty, cfr)
-        val pulse = 0.8f + 0.2f * sin(time * 22f)
-        var lastLit = 0f
+        // 1) brightness of every spike, then dark halos first so the glows are drawn on top of them
         for (k in 0 until n) {
             val d = fw - cfr[k] + 0.04f
             val lit = smooth(0f, 0.08f, d)
             val flash = smooth(0f, 0.05f, d) * (1f - smooth(0.05f, 0.3f, d))
-            val b = min(1f, lit * 0.62f * (0.85f + 0.15f * sin(time * 18f + k * 0.9f)) + flash * 0.85f) * amt
+            val fl = 0.85f + 0.15f * sin(time * rate + k * 0.9f)
+            chB[k] = min(1f, lit * 0.72f * build * fl + flash * 0.95f) * amt
+            if (chB[k] > 0.01f) { haloPaint.alpha = a255(chB[k] * 0.55f); sprite(c, sHalo, ctx[k], cty[k], 13f * ds, haloPaint) }
+        }
+        var lastLit = 0f
+        for (k in 0 until n) {
+            val b = chB[k]
             if (b <= 0.01f) continue
             if (k == n - 1) lastLit = b
-            plusPaint.alpha = (b * 0.55f * 255f).toInt(); sprite(c, sBlue, cbx[k], cby[k], 5.5f * ds * (0.8f + 0.4f * flash), plusPaint)
-            plusPaint.alpha = (b * 0.9f * 255f).toInt(); sprite(c, sCyan, ctx[k], cty[k], 6.5f * ds * (0.7f + 0.3f * b), plusPaint)
-            plusPaint.alpha = (b * 255f).toInt(); sprite(c, sCore, ctx[k], cty[k], 2.9f * ds * (0.6f + 0.4f * b), plusPaint)
+            val fk = 0.9f + 0.4f * smooth(0f, 0.05f, fw - cfr[k] + 0.04f) * (1f - smooth(0.05f, 0.3f, fw - cfr[k] + 0.04f))
+            plusPaint.alpha = a255(b * 0.38f); sprite(c, sBlue, cbx[k], cby[k], 17f * ds * fk, plusPaint)      // wide aura on the back
+            plusPaint.alpha = a255(b * 0.8f); sprite(c, sBlue, cbx[k], cby[k], 9f * ds, plusPaint)
+            plusPaint.alpha = a255(b * 0.95f); sprite(c, sCyan, ctx[k], cty[k], 10.5f * ds * (0.7f + 0.3f * b), plusPaint)   // glowing spike tip
+            plusPaint.alpha = a255(b); sprite(c, sCore, ctx[k], cty[k], 5f * ds * (0.6f + 0.4f * b), plusPaint)
             if (k + 1 < n) {
-                val b2 = min(1f, smooth(0f, 0.08f, fw - cfr[k + 1] + 0.04f) * 0.62f) * amt
-                val mb = (b + b2) * 0.5f
-                if (mb > 0.02f) { plusPaint.alpha = (mb * 0.45f * 255f).toInt(); sprite(c, sCyan, (cbx[k] + cbx[k + 1]) * 0.5f, (cby[k] + cby[k + 1]) * 0.5f, 4.3f * ds, plusPaint) }
+                val mb = (b + chB[k + 1]) * 0.5f
+                if (mb > 0.02f) {
+                    val mx = (cbx[k] + cbx[k + 1]) * 0.5f; val my = (cby[k] + cby[k + 1]) * 0.5f
+                    plusPaint.alpha = a255(mb * 0.55f); sprite(c, sCyan, mx, my, 7f * ds, plusPaint)               // glow along the spine between spikes
+                    plusPaint.alpha = a255(mb * 0.35f); sprite(c, sBlue, mx, my, 12f * ds, plusPaint)
+                }
             }
         }
-        // bright head of the wave while it travels
-        if (fw > 0.01f && fw < 0.9f) {
+        // 2) bright head of the wave while it travels
+        if (fw > 0.01f && fw < 0.95f) {
             var k = 0
             while (k + 1 < n - 1 && cfr[k + 1] < fw) k++
-            val u = clampF((fw - cfr[k]) / max(0.01f, cfr[k + 1] - cfr[k]), 0f, 1f)
-            val wx = lerp3(cbx[k], cbx[k + 1], u); val wy = lerp3(cby[k], cby[k + 1], u)
-            plusPaint.alpha = (0.9f * amt * 255f).toInt(); sprite(c, sCyan, wx, wy, 8.4f * ds, plusPaint)
-            plusPaint.alpha = (amt * 255f).toInt(); sprite(c, sCore, wx, wy, 3.8f * ds, plusPaint)
+            val f = clampF((fw - cfr[k]) / max(0.01f, cfr[k + 1] - cfr[k]), 0f, 1f)
+            val wx = lerp3(cbx[k], cbx[k + 1], f); val wy = lerp3(cby[k], cby[k + 1], f)
+            haloPaint.alpha = a255(0.5f * amt); sprite(c, sHalo, wx, wy, 18f * ds, haloPaint)
+            plusPaint.alpha = a255(0.9f * amt); sprite(c, sCyan, wx, wy, 14f * ds, plusPaint)
+            plusPaint.alpha = a255(amt); sprite(c, sCore, wx, wy, 6f * ds, plusPaint)
         }
-        // gather: the glow streams from the neck into the mouth and grows into an orb a little smaller than the mouth opening
+        // 3) gather: the neck feeds the mouth, sparks and rings are pulled in, the orb grows
+        model.mouthPoint(st, 28f, 3f, orbP)
         if (gt > 0f && fireFt < 0f && n > 1) {
-            model.mouthPoint(st, 28f, 3f, orbP)
-            val u = 0.12f + 0.88f * smooth(0f, 1f, gt)
-            val jx = sin(time * 61f) * 0.5f * ds * u; val jy = cos(time * 53f) * 0.5f * ds * u
-            for (j in 0 until 4) {
+            val g = smooth(0f, 1f, gt)
+            val ou = 0.15f + 0.85f * g
+            val pulse = 0.88f + 0.12f * sin(time * rate)
+            val ox = orbP[0] + sin(time * 61f) * 0.8f * ds * ou; val oy = orbP[1] + cos(time * 53f) * 0.8f * ds * ou
+            haloPaint.alpha = a255(0.6f * g); sprite(c, sHalo, ox, oy, 24f * ds * pw * ou, haloPaint)
+            for (j in 0 until 4) {                                                  // streams from the last spike into the mouth
                 val f = (gt * 1.6f + j * 0.25f) % 1f
-                val px = lerp3(ctx[n - 1], orbP[0], f); val py = lerp3(cty[n - 1], orbP[1], f)
-                plusPaint.alpha = ((1f - f) * 0.9f * lastLit.coerceAtLeast(0.6f) * 255f).toInt(); sprite(c, sCore, px, py, 1.8f * ds, plusPaint)
+                val px = lerp3(ctx[n - 1], ox, f); val py = lerp3(cty[n - 1], oy, f)
+                plusPaint.alpha = a255((1f - f) * 0.95f * max(lastLit, 0.6f)); sprite(c, sCore, px, py, 3.2f * ds, plusPaint)
+                plusPaint.alpha = a255((1f - f) * 0.5f * max(lastLit, 0.6f)); sprite(c, sCyan, px, py, 6f * ds, plusPaint)
             }
-            plusPaint.alpha = (0.75f * 255f).toInt(); sprite(c, sCyan, orbP[0] + jx, orbP[1] + jy, 5.8f * ds * u * (0.92f + 0.08f * pulse), plusPaint)
-            plusPaint.alpha = (0.95f * 255f).toInt(); sprite(c, sCore, orbP[0] + jx, orbP[1] + jy, 4.8f * ds * u, plusPaint)
+            sparkPaint.strokeWidth = max(1f, 1.5f * ds)
+            val ns = (6 + 10 * pq).toInt()
+            for (j in 0 until ns) {                                                 // sparks pulled in from all around
+                val a = j * 2.399963f + time * 0.7f
+                val f = (gt * 2.2f + j * 0.37f) % 1f
+                val r = (46f - 10f * (j % 3)) * ds * (1f - f)
+                val sx = ox + cos(a) * r; val sy = oy + sin(a) * r
+                val al = (0.3f + 0.7f * f) * g
+                sparkPaint.color = (chNear and 0x00FFFFFF) or (a255(al) shl 24)
+                c.drawLine(sx, sy, sx + cos(a) * 7f * ds, sy + sin(a) * 7f * ds, sparkPaint)
+                plusPaint.alpha = a255(al); sprite(c, sCore, sx, sy, 2.4f * ds, plusPaint)
+            }
+            for (j in 0 until 3) {                                                  // rings shrinking into the mouth
+                val f = (gt * 1.8f + j / 3f) % 1f
+                sparkPaint.color = (chNear and 0x00FFFFFF) or (a255(sin(f * PI.toFloat()) * 0.65f * g) shl 24)
+                c.drawCircle(ox, oy, (40f - 34f * f) * ds * pw, sparkPaint)
+            }
+            plusPaint.alpha = a255(0.55f * g); sprite(c, sBlue, ox, oy, 28f * ds * ou * pw * pulse, plusPaint)
+            plusPaint.alpha = a255(0.85f * g); sprite(c, sCyan, ox, oy, 17f * ds * ou * pw * pulse, plusPaint)
+            plusPaint.alpha = a255(g); sprite(c, sCore, ox, oy, 9f * ds * ou * pw, plusPaint)
+        }
+        // 4) release: bright flash in the mouth and a ring that flies outwards
+        if (fireFt in 0f..0.4f) {
+            val rp = fireFt / 0.4f; val rel = 1f - rp
+            plusPaint.alpha = a255(rel); sprite(c, sCore, orbP[0], orbP[1], (10f + 14f * rel) * ds * pw, plusPaint)
+            plusPaint.alpha = a255(rel * 0.9f); sprite(c, sCyan, orbP[0], orbP[1], (18f + 26f * rp) * ds * pw, plusPaint)
+            plusPaint.alpha = a255(rel * 0.5f); sprite(c, sBlue, orbP[0], orbP[1], (30f + 30f * rp) * ds * pw, plusPaint)
+            sparkPaint.strokeWidth = max(1.5f, 2.4f * ds * rel)
+            sparkPaint.color = (chCore and 0x00FFFFFF) or (a255(rel * 0.85f) shl 24)
+            c.drawCircle(orbP[0], orbP[1], (8f + 52f * rp) * ds * pw, sparkPaint)
         }
     }
 

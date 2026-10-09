@@ -28,7 +28,7 @@ import android.widget.Toast
 import java.io.File
 
 /**
- * Simple dark home screen for the app: a big start/stop button, four percentage sliders (quality, particles and size have preview boxes)
+ * Simple dark home screen for the app: a big start/stop button, five sliders (quality, particles, size and charge-up have preview boxes)
  * (quality, dragon size, dragon speed) that change the dragon live, a flame colour picker, and three setup rows.
  */
 class MainActivity : Activity() {
@@ -103,9 +103,10 @@ class MainActivity : Activity() {
         title: String, hint: String, val min: Int, val max: Int, start: Int,
         private val save: (Int) -> Unit, private val live: () -> Unit, private val step: Int = 1,
         private val previews: List<PreviewView> = emptyList(), previewDp: Int = 150,
-        private val def: Int = 100, private val showPreviews: Boolean = true
+        private val def: Int = 100, private val showPreviews: Boolean = true,
+        private val fmt: (Int) -> String = { "$it%" }
     ) {
-        val value = text("$start%", 15f, TEAL, true)
+        val value = text(fmt(start), 15f, TEAL, true)
         val seek = SeekBar(this@MainActivity)
         val view = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL }
 
@@ -160,7 +161,7 @@ class MainActivity : Activity() {
             seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(s: SeekBar, p: Int, fromUser: Boolean) {
                     val v = p * step + min
-                    value.text = "$v%"
+                    value.text = fmt(v)
                     previews.forEach { it.setValue(v) }
                     if (fromUser) { save(v); live() }
                 }
@@ -326,11 +327,18 @@ class MainActivity : Activity() {
             50, 150, Prefs.speedPct(this), { Prefs.setSpeedPct(this, it) }, { DragonService.instance?.view?.reloadSettings() },
             step = 10
         )
-        sliders.addAll(listOf(quality, particles, size, speed))
+        val charge = Slider(
+            "Charge-up time", "Glow that builds before every fire breath, in your flame colours. Off = no charge-up.",
+            0, 30, Prefs.chargeTenths(this), { Prefs.setChargeTenths(this, it) }, { DragonService.instance?.view?.reloadSettings() },
+            step = 5, previews = listOf(PreviewView(this, PreviewView.CHARGE)), previewDp = 150, def = 15,
+            fmt = { if (it == 0) "Off" else String.format("%.1f s", it / 10f) }
+        )
+        sliders.addAll(listOf(quality, particles, size, speed, charge))
         settings.addView(quality.view)
         settings.addView(divider()); settings.addView(particles.view)
         settings.addView(divider()); settings.addView(size.view)
         settings.addView(divider()); settings.addView(speed.view)
+        settings.addView(divider()); settings.addView(charge.view)
         col.addView(settings)
 
         // visual: flame colours (live preview + picker, blue is the default) and the two transparency sliders

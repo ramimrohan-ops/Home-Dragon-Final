@@ -29,6 +29,7 @@ import kotlin.math.sin
  * QUALITY: the sitting dragon with its frame rate (30, or the Quality rate if lower) in the top-right corner.
  * FLYING: the dragon in the flying pose, flapping in place, with its frame rate (screen rate x Quality) in the top-right corner.
  * PARTICLES: the dragon's head breathing fire at a dummy icon, with the flame count of the chosen particle quality.
+ * CHARGE: the same head, but showing the charge-up before the breath (orb, sparks and rings in the mouth, flash at release); the value is tenths of a second.
  *
  * It only animates while [start] has been called (the slider is being dragged); otherwise it holds the last frame.
  */
@@ -40,6 +41,7 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
         const val PARTICLES = 2
         const val FLYING = 3
         const val SEETHROUGH = 4
+        const val CHARGE = 5
         private const val FLY_W = 256f               // flying pose: width in model units
         private const val FLY_H = 250f               // flying pose: height in model units
         private const val FLY_CX = -31.5f            // flying pose: horizontal centre
@@ -112,6 +114,8 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
         if (FlameColors.same(cols, flameCols)) return
         flameCols = cols
         sprites = Array(6) { makeSprite(ramp(it / 5f)) }
+        if (FlameColors.isDefault(cols)) model.setFlameGlow(Color.rgb(220, 245, 255), Color.rgb(70, 170, 255), Color.rgb(30, 80, 255))
+        else model.setFlameGlow(ramp(0f), ramp(0.18f), ramp(0.5f))
         invalidate()
     }
 
@@ -152,10 +156,13 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
         else -> hz
     }
 
+    private val fireKind get() = kind == PARTICLES || kind == CHARGE
+    private val chargeS get() = if (kind == CHARGE) pct / 10f else 0f          // charge-up seconds (CHARGE preview only)
+
     fun setValue(v: Int) {
         if (v == pct) return
         pct = v
-        if (!running) { if (kind == PARTICLES) warm(); invalidate() }
+        if (!running) { if (fireKind) warm(); invalidate() }
     }
 
     private var bodyT = 50
@@ -170,6 +177,7 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
     fun start() {
         if (running) return
         running = true
+        reloadFlame()
         lastNs = 0L; dueNs = 0L
         Choreographer.getInstance().postFrameCallback(callback)
     }
@@ -178,6 +186,7 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
         if (!running) return
         running = false
         Choreographer.getInstance().removeFrameCallback(callback)
+        if (kind == CHARGE) warm()                  // hold a clear still picture of the charge
         invalidate()
     }
 
@@ -192,7 +201,7 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
             leftRect.set(0f, 0f, w.toFloat(), h.toFloat())
             geomReady = true
         }
-        if (kind == PARTICLES && w > 0 && h > 0) {
+        if (fireKind && w > 0 && h > 0) {
             rightRect.set(0f, 0f, w.toFloat(), h.toFloat())
             val rw = rightRect.width()
             headSt.apply {
@@ -225,25 +234,30 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
         if (nextBlink <= 0f) { blink = 0.14f; nextBlink = 2f + rnd() * 3f }
         if (blink > 0f) blink -= dt
         if (kind == FLYING || kind == SEETHROUGH) wingPh += dt * 6.2832f * 2.2f
-        if (kind == PARTICLES) step(dt)
+        if (fireKind) step(dt)
     }
 
     /** Run the fire for a moment so a still picture already shows a flame in flight. */
     private fun warm() {
         if (!geomReady) return
         nf = 0; ns = 0; acc = 0f; heat = 0f; mouth = 0f; cyc = 0.45f
+        if (chargeS > 0.05f) {                      // still picture of the charge: the orb is gathering in the mouth
+            cyc = 0.3f + 0.88f * chargeS; mouth = 0.5f
+            return
+        }
         for (i in 0 until 66) step(1f / 60f)
     }
 
     private fun step(dt: Float) {
+        val off = chargeS                           // the breath starts this much later (0 for the Particles preview)
         cyc += dt
-        if (cyc >= CYCLE) cyc -= CYCLE
-        val firing = cyc in 0.45f..2.1f
-        val mouthGoal = if (cyc in 0.3f..2.25f) 1f else 0f
+        while (cyc >= CYCLE + off) cyc -= CYCLE + off
+        val firing = cyc in (0.45f + off)..(2.1f + off)
+        val mouthGoal = if (cyc in (0.3f + off)..(2.25f + off)) 1f else if (off > 0.05f && cyc in (0.3f + off * 0.7f)..(0.3f + off)) 0.5f else 0f
         mouth += (mouthGoal - mouth) * min(1f, dt * 12f)
-        heat = if (firing && cyc > 0.7f) min(1f, heat + dt * 2.2f) else max(0f, heat - dt * 0.8f)
+        heat = if (firing && cyc > 0.7f + off) min(1f, heat + dt * 2.2f) else max(0f, heat - dt * 0.8f)
 
-        val q = pct / 100f
+        val q = if (kind == CHARGE) 1f else pct / 100f
         val capF = min(MAXF, (70 + 130 * q).toInt())
         val capS = min(MAXS, (30 + 60 * q).toInt())
 
@@ -487,6 +501,48 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
         textFill.textAlign = Paint.Align.CENTER
     }
 
+    /** Charge-up in the mouth: sparks and rings pulled into a growing orb, then a flash and a ring at the moment of the breath. */
+    private fun drawChargeFx() {
+        val off = chargeS
+        if (off <= 0.05f) return
+        val hs = headSt.ds
+        val ox = mx - 8f * hs; val oy = my
+        val u = ((cyc - 0.3f) / off).coerceIn(0f, 1f)
+        val rel = cyc - (0.45f + off)
+        if (cyc >= 0.3f && rel < 0f) {
+            val gt = ((u - 0.6f) / 0.4f).coerceIn(0f, 1f)
+            val g = gt * gt * (3f - 2f * gt)
+            if (g > 0f) {
+                val ou = 0.15f + 0.85f * g
+                val pulse = 0.88f + 0.12f * sin(t * (14f + 26f * u))
+                line.strokeWidth = max(dp(1f), 1.5f * hs)
+                for (j in 0 until 12) {                                         // sparks pulled in from all around
+                    val a = j * 2.399963f + t * 0.7f
+                    val f = (gt * 2.2f + j * 0.37f) % 1f
+                    val r = (46f - 10f * (j % 3)) * hs * (1f - f)
+                    sprite(c, 0, ox + cos(a) * r, oy + sin(a) * r, 2.4f * hs + dp(1f), (0.3f + 0.7f * f) * g)
+                }
+                for (j in 0 until 3) {                                          // rings shrinking into the mouth
+                    val f = (gt * 1.8f + j / 3f) % 1f
+                    line.color = (ramp(0.18f) and 0x00FFFFFF) or ((sin(f * 3.14159f) * 0.65f * g * 255f).toInt().coerceIn(0, 255) shl 24)
+                    c.drawCircle(ox, oy, (40f - 34f * f) * hs, line)
+                }
+                sprite(c, 3, ox, oy, 28f * hs * ou * pulse, 0.55f * g)
+                sprite(c, 1, ox, oy, 17f * hs * ou * pulse, 0.85f * g)
+                sprite(c, 0, ox, oy, 9f * hs * ou, g)
+            }
+        }
+        if (rel in 0f..0.4f) {                                                   // release
+            val rp = rel / 0.4f; val rl = 1f - rp
+            sprite(c, 0, ox, oy, (10f + 14f * rl) * hs, rl)
+            sprite(c, 1, ox, oy, (18f + 26f * rp) * hs, rl * 0.9f)
+            sprite(c, 3, ox, oy, (30f + 30f * rp) * hs, rl * 0.5f)
+            line.strokeWidth = max(dp(1.2f), 2.4f * hs * rl)
+            line.color = (ramp(0f) and 0x00FFFFFF) or ((rl * 0.85f * 255f).toInt().coerceIn(0, 255) shl 24)
+            c.drawCircle(ox, oy, (8f + 52f * rp) * hs, line)
+        }
+    }
+
     private fun drawParticles(c: Canvas, w: Float, h: Float) {
         if (!geomReady) return
         c.save(); c.clipRect(rightRect)
@@ -520,15 +576,20 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
             sprite(c, 1, mx, my, dp(13f) * mouth, 0.8f * mouth)
             sprite(c, 0, mx, my, dp(6f) * mouth, 0.9f * mouth)
         }
+        if (kind == CHARGE) drawChargeFx()
         // sparks
         for (i in 0 until ns) {
             val a = sage[i] / slife[i]
             sprite(c, if (a < 0.4f) 0 else 1, sx[i], sy[i], dp(3.2f), 1f - a)
         }
-        val capF = min(MAXF, (70 + 130 * pct / 100f).toInt())
         textFill.textSize = dp(10.5f); textFill.color = Color.parseColor("#B8C6E4")
         textFill.textAlign = Paint.Align.LEFT
-        c.drawText("flames up to $capF", rightRect.left + dp(10f), h - dp(8f), textFill)
+        if (kind == CHARGE) {
+            c.drawText(if (chargeS <= 0.05f) "charge-up: off" else "charge-up: " + String.format("%.1f", chargeS) + " s", rightRect.left + dp(10f), h - dp(8f), textFill)
+        } else {
+            val capF = min(MAXF, (70 + 130 * pct / 100f).toInt())
+            c.drawText("flames up to $capF", rightRect.left + dp(10f), h - dp(8f), textFill)
+        }
         textFill.textAlign = Paint.Align.CENTER
         c.restore()
     }
