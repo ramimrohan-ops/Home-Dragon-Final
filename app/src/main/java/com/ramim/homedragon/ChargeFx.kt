@@ -1,7 +1,7 @@
 package com.ramim.homedragon
 
-import kotlin.math.PI
 import kotlin.math.cos
+import kotlin.math.exp
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
@@ -10,11 +10,12 @@ import kotlin.math.sin
 /**
  * The fire charge-up, shared by the dragon on the home screen and the Charge-up time preview.
  *
- * It starts at 9 points (the tail tip and the 8 claw tips of the two wings). The glow runs from each claw tip along the finger bone to the wrist,
- * then along the arm bone to the shoulder; the tail glow runs along the spine spikes to the shoulder. They all arrive together, flash, and one
- * glow goes up the neck into the mouth, where sparks and rings gather into an orb. At the breath there is a flash and a ring. Short electric
- * arcs jump between the spine spikes while it charges, keep going for the whole breath, then fade to nothing.
- * Colours come from an 8-step gradient of the flame colours (index 0 = hot core .. 7 = cool tip); the caller draws with it.
+ * It starts at 9 points: the tail tip and the 8 claw tips of the two wings. Each one is a steady glowing source that keeps sending out waves
+ * (never a loop that restarts): from a claw tip along the finger bone to the wrist, then the arm bone to the shoulder; from the tail tip along
+ * the spine spikes to the shoulder and on up the neck into the throat. Waves are sent for the whole charge and the whole breath, then stop and
+ * fade out. In the throat an orb grows and imploding particles are pulled into it; during the breath the orb shrinks steadily and is
+ * smallest when the breath ends. Short electric arcs (12 gaps between the spine spikes at a time, a new random set 10 times a second)
+ * run for the whole charge and breath. Colours come from an 8-step gradient of the flame colours (index 0 = hot core .. 7 = cool tip).
  */
 class ChargeFx(private val model: DragonModel, private val p: Painter) {
 
@@ -31,14 +32,22 @@ class ChargeFx(private val model: DragonModel, private val p: Painter) {
     private val cbx = FloatArray(16); private val cby = FloatArray(16)
     private val ctx = FloatArray(16); private val cty = FloatArray(16); private val cfr = FloatArray(16)
     private val chB = FloatArray(16)
+    private val wvK = FloatArray(16)
+    private val scK = FloatArray(16)
     private val nearW = FloatArray(14); private val farW = FloatArray(14)
     private val orbP = FloatArray(2)
+    private val tipP = FloatArray(2)
     private val arcP = FloatArray(12)
-    private val strk = FloatArray(4)
+    private val trl = FloatArray(4)
 
     // values of the current frame, so the helpers below need short argument lists
-    private var ds = 1f; private var time = 0f; private var xw = 0f; private var amt = 0f; private var soft = 0f
+    private var ds = 1f; private var time = 0f; private var amt = 0f
     private var build = 0f; private var rate = 0f
+    private var tc = 0f                 // seconds since the charge began
+    private var travel = 0.9f           // seconds a wave needs from the claw tip / tail tip to the shoulder
+    private var period = 0.28f          // seconds between two waves
+    private var tEnd = 99f              // the last wave is sent at this time (end of the breath)
+    private var x0w = 0f                // front of the very first wave
 
     private fun sm(a: Float, b: Float, x: Float): Float {
         val u = ((x - a) / (b - a)).coerceIn(0f, 1f)
@@ -56,41 +65,62 @@ class ChargeFx(private val model: DragonModel, private val p: Painter) {
     private fun gi(g: Float): Int = ((1f - g.coerceIn(0f, 1f)) * 7f + 0.5f).toInt().coerceIn(0, 7)
 
     /**
-     * u = charge progress 0..1; ft = seconds since the breath started (negative while charging);
-     * charging = still charging; spark = strength of the electric arcs after the charge (1 during the breath, then fading to 0).
+     * Strength of the waves at position x on a path (0 = claw tip / tail tip, 1 = shoulder, 1.3 = throat).
+     * Waves are sent one after another from position 0 at a fixed rhythm, so there are always several on the bone, and nothing ever restarts.
      */
-    fun draw(st: DragonModel.State, scale: Float, now: Float, chargeT: Float, u: Float, ft: Float, charging: Boolean, spark: Float, pq: Float) {
+    private fun waveSum(x: Float): Float {
+        var s = 0f
+        var j = min((tc / period).toInt(), (tEnd / period).toInt())
+        while (j >= 0) {
+            val pj = (tc - j * period) / travel
+            if (pj > x + 0.42f) break
+            if (pj >= x - 0.42f) { val d = (x - pj) / 0.13f; s += exp(-d * d) }
+            j--
+        }
+        return min(1.3f, s)
+    }
+
+    /**
+     * u = charge progress 0..1; ft = seconds since the breath started (negative while charging); fe = seconds since the breath ended
+     * (0 or negative until then); fireDur = length of the breath; charging = still charging.
+     */
+    fun draw(st: DragonModel.State, scale: Float, now: Float, chargeT: Float, u: Float, ft: Float, fe: Float, fireDur: Float, charging: Boolean, pq: Float) {
         if (chargeT <= 0.05f) return
         ds = scale; time = now
-        amt = if (charging) sm(0f, 0.1f, u) else 1f - sm(0.1f, 0.45f, ft)
-        soft = if (charging) 0f else spark * 0.42f
-        val sparkAmt = if (charging) (0.35f + 0.65f * u) * sm(0.1f, 0.3f, u) else spark
-        if (amt <= 0.01f && soft <= 0.01f && sparkAmt <= 0.01f) return
+        val fade = if (charging || fe <= 0f) 1f else 1f - sm(0f, 1f, fe)         // after the breath everything fades out in one second
+        amt = if (charging) sm(0f, 0.1f, u) else fade
+        val sparkAmt = if (charging) (0.35f + 0.65f * u) * sm(0.1f, 0.3f, u) else fade
+        if (amt <= 0.01f && sparkAmt <= 0.01f) return
         val pw = 0.75f + 0.25f * (chargeT / 1.5f).coerceIn(0f, 1.6f)           // longer charge = bigger, brighter finish
         build = 0.5f + 0.5f * u
         rate = 14f + 26f * u
+        tc = if (charging) u * chargeT else chargeT + max(0f, ft)
+        tEnd = chargeT + fireDur
+        travel = (chargeT * 0.6f).coerceIn(0.4f, 1.1f)
+        period = travel / 3.2f
+        x0w = tc / travel
         val n = model.chargePoints(st, cbx, cby, ctx, cty, cfr)
         val hasNear = model.wingPoints(st, false, nearW)
         val hasFar = model.wingPoints(st, true, farW)
 
-        // where the shoulders are along the spine: the tail glow and the wing glows reach it together
+        // where the shoulders are along the spine: the waves of the tail and of the wings reach it together
         var fs = 0.8f
         if (hasNear) {
             var best = 1e9f
             for (k in 1 until n) { val d = hypot(cbx[k] - nearW[0], cby[k] - nearW[1]); if (d < best) { best = d; fs = cfr[k] } }
         }
         fs = fs.coerceIn(0.5f, 0.9f)
-        xw = (u / 0.40f).coerceIn(0f, 1f) * 1.04f                                  // wing glow: 0 claw tip .. 1 shoulder
-        val fw = if (u < 0.40f) fs * (u / 0.40f) else fs + (0.97f - fs) * ((u - 0.40f) / 0.30f).coerceIn(0f, 1f)   // tail glow, then up the neck
-        val gt = ((u - 0.6f) / 0.4f).coerceIn(0f, 1f)                              // gathering in the mouth (last 40%)
 
         // spikes: brightness (and dark halos first, so the glows are drawn on top of them)
         for (k in 0 until n) {
-            val d = fw - cfr[k] + 0.04f
-            val lit = sm(0f, 0.08f, d)
-            val flash = sm(0f, 0.05f, d) * (1f - sm(0.05f, 0.3f, d))
+            val xk = if (cfr[k] <= fs) cfr[k] / fs else 1f + 0.3f * (cfr[k] - fs) / max(0.05f, 0.97f - fs)
+            val wv = waveSum(xk)
+            wvK[k] = wv
+            val lit = if (k == 0) 1f else sm(0f, 0.08f, x0w - xk + 0.04f)
             val fl = 0.85f + 0.15f * sin(time * rate + k * 0.9f)
-            chB[k] = max(min(1f, lit * 0.72f * build * fl + flash * 0.95f) * amt, soft * lit * fl)
+            var b = min(1f, lit * (0.26f + 0.18f * build) * fl + wv * (0.5f + 0.4f * build))
+            if (k == 0) b = max(b, 0.62f * fl)                                   // the tail tip is a steady source
+            chB[k] = b * amt
             if (chB[k] > 0.01f) p.halo(ctx[k], cty[k], 13f * ds, chB[k] * 0.55f)
         }
         // wings: halos, then glows
@@ -106,21 +136,18 @@ class ChargeFx(private val model: DragonModel, private val p: Painter) {
             if (hasNear) for (f in 0 until 4) { p.glow(6, nearW[6 + 2 * f], nearW[7 + 2 * f], 13f * ds * (0.8f + 0.5f * sb), sb * 0.9f) }
             if (hasFar) for (f in 0 until 4) { p.glow(6, farW[6 + 2 * f], farW[7 + 2 * f], 11f * ds * (0.8f + 0.5f * sb), sb * 0.8f) }
         }
-        // the glows from both wings and the tail meet and flash at the shoulders
-        val mg = sm(0.36f, 0.42f, u) * (1f - sm(0.42f, 0.58f, u)) * amt
-        if (mg > 0.01f && charging) {
+        // every wave that arrives at the shoulders flashes there
+        val mg = min(1f, waveSum(1f)) * sm(0f, 0.2f, x0w - 1f + 0.2f) * amt
+        if (mg > 0.02f) {
             if (hasNear) shoulderFlash(nearW[0], nearW[1], mg, pw)
             if (hasFar) shoulderFlash(farW[0], farW[1], mg * 0.8f, pw)
         }
 
         // spine spikes
-        var lastLit = 0f
         for (k in 0 until n) {
             val b = chB[k]
             if (b <= 0.01f) continue
-            if (k == n - 1) lastLit = b
-            val d = fw - cfr[k] + 0.04f
-            val fk = 0.9f + 0.4f * sm(0f, 0.05f, d) * (1f - sm(0.05f, 0.3f, d))
+            val fk = 0.9f + 0.5f * min(1f, wvK[k])
             val g = cfr[k] * 0.8f + 0.1f                                           // cool at the tail, hot near the head
             p.glow(gi(g), cbx[k], cby[k], 17f * ds * fk, b * 0.38f)
             p.glow(gi(g + 0.1f), cbx[k], cby[k], 9f * ds, b * 0.8f)
@@ -135,24 +162,19 @@ class ChargeFx(private val model: DragonModel, private val p: Painter) {
                 }
             }
         }
-        // bright head of the glow while it runs along the spine
-        if (charging && fw > 0.01f && fw < 0.95f) {
-            var k = 0
-            while (k + 1 < n - 1 && cfr[k + 1] < fw) k++
-            val f = ((fw - cfr[k]) / max(0.01f, cfr[k + 1] - cfr[k])).coerceIn(0f, 1f)
-            val wx = cbx[k] + (cbx[k + 1] - cbx[k]) * f; val wy = cby[k] + (cby[k + 1] - cby[k]) * f
-            p.halo(wx, wy, 18f * ds, 0.5f * amt)
-            p.glow(gi(fw), wx, wy, 14f * ds, 0.9f * amt)
-            p.glow(0, wx, wy, 6f * ds, amt)
-        }
 
-        // short electric arcs between neighbouring spike tips
+        // short electric arcs between neighbouring spike tips: exactly 12 of the gaps at a time, chosen at random, a new set 10 times a second
         if (sparkAmt > 0.02f && n > 1) {
-            val slot = (time * 24f).toInt()                                          // a new set of arcs 24 times a second
-            for (k in 0 until n - 1) {
+            val slot = (time * 10f).toInt()
+            val gaps = n - 1
+            for (k in 0 until gaps) scK[k] = if (min(chB[k], chB[k + 1]) > 0.08f) hash(slot, k, 7) else 2f
+            val want = if (!charging && fe > 0f) max(1, (12f * sparkAmt).toInt()) else 12
+            for (k in 0 until gaps) {
+                if (scK[k] >= 2f) continue
+                var rank = 0
+                for (j in 0 until gaps) if (scK[j] < scK[k]) rank++
+                if (rank >= want) continue
                 val bk = min(chB[k], chB[k + 1])
-                if (bk <= 0.08f) continue
-                if (hash(slot, k, 7) > sparkAmt * (0.3f + 0.45f * pq)) continue
                 val x0 = ctx[k]; val y0 = cty[k]; val x1 = ctx[k + 1]; val y1 = cty[k + 1]
                 val dx = x1 - x0; val dy = y1 - y0; val len = max(1e-3f, hypot(dx, dy))
                 val nx = -dy / len; val ny = dx / len
@@ -164,54 +186,73 @@ class ChargeFx(private val model: DragonModel, private val p: Painter) {
                 arcP[8] = arcP[6]; arcP[9] = arcP[7]
                 arcP[10] = x1; arcP[11] = y1
                 val ci = (hash(slot, k, 3) * 3f).toInt().coerceIn(0, 2)
-                val al = min(1f, bk * 1.4f) * sparkAmt.coerceAtMost(1f)
+                val al = min(1f, 0.6f + bk) * sparkAmt.coerceAtMost(1f)
                 p.lines(arcP, 12, ci + 1, max(1f, 1.5f * ds), al)
                 p.lines(arcP, 12, 0, max(0.8f, 0.6f * ds), al)
                 p.glow(ci, (x0 + x1) * 0.5f, (y0 + y1) * 0.5f, 5f * ds, 0.5f * al)
             }
         }
 
-        // gather in the mouth
-        model.mouthPoint(st, 28f, 3f, orbP)
-        if (charging && gt > 0f && n > 1) {
-            val g = sm(0f, 1f, gt)
-            val ou = 0.15f + 0.85f * g
-            val pulse = 0.88f + 0.12f * sin(time * rate)
+        // the throat: where the neck meets the head, at the back of the open mouth. All the charge gathers here.
+        model.mouthPoint(st, 6f, 4.5f, orbP)
+        model.mouthPoint(st, 36f, 3f, tipP)
+        val gt = ((u - 0.45f) / 0.55f).coerceIn(0f, 1f)
+        val g = if (charging) sm(0f, 1f, gt) else fade
+        // the orb grows while charging, then shrinks steadily through the breath: smallest when the breath ends
+        val ou = if (charging) 0.15f + 0.85f * g else 1f - 0.88f * (ft / max(0.1f, fireDur)).coerceIn(0f, 1f)
+        if (g > 0.01f && n > 1) {
+            val arr = min(1f, waveSum(1.3f))                                       // a wave reaching the throat makes the orb throb
+            val pulse = (0.9f + 0.1f * sin(time * rate)) * (1f + 0.12f * arr)
             val ox = orbP[0] + sin(time * 61f) * 0.8f * ds * ou; val oy = orbP[1] + cos(time * 53f) * 0.8f * ds * ou
             p.halo(ox, oy, 24f * ds * pw * ou, 0.6f * g)
-            for (j in 0 until 4) {                                                   // streams from the last spike into the mouth
-                val f = (gt * 1.6f + j * 0.25f) % 1f
+            val lb = max(chB[n - 1], 0.5f * g)
+            for (j in 0 until 3) {                                                 // streams from the last spike into the throat
+                val f = (time * 1.5f + j / 3f) % 1f
                 val px = ctx[n - 1] + (ox - ctx[n - 1]) * f; val py = cty[n - 1] + (oy - cty[n - 1]) * f
-                p.glow(0, px, py, 3.2f * ds, (1f - f) * 0.95f * max(lastLit, 0.6f))
-                p.glow(2, px, py, 6f * ds, (1f - f) * 0.5f * max(lastLit, 0.6f))
+                p.glow(0, px, py, 3.2f * ds, (1f - f) * 0.9f * lb * g)
+                p.glow(2, px, py, 6f * ds, (1f - f) * 0.5f * lb * g)
             }
-            val ns = (6 + 10 * pq).toInt()
-            for (j in 0 until ns) {                                                  // sparks pulled in from all around, in different colours
-                val a = j * 2.399963f + time * 0.7f
-                val f = (gt * 2.2f + j * 0.37f) % 1f
-                val r = (46f - 10f * (j % 3)) * ds * (1f - f)
-                val sx = ox + cos(a) * r; val sy = oy + sin(a) * r
-                val al = (0.3f + 0.7f * f) * g
-                strk[0] = sx; strk[1] = sy; strk[2] = sx + cos(a) * 7f * ds; strk[3] = sy + sin(a) * 7f * ds
-                p.lines(strk, 4, 1 + j % 4, max(1f, 1.5f * ds), al)
-                p.glow(j % 3, sx, sy, 2.4f * ds, al)
-            }
-            for (j in 0 until 3) {                                                   // rings shrinking into the mouth
-                val f = (gt * 1.8f + j / 3f) % 1f
-                p.ring(ox, oy, (40f - 34f * f) * ds * pw, 1 + j * 2, max(1f, 1.5f * ds), sin(f * PI.toFloat()) * 0.65f * g)
-            }
-            p.glow(4, ox, oy, 28f * ds * ou * pw * pulse, 0.55f * g)                // orb: hot white centre, gradient to the cool edge
+            implode(ox, oy, g * (0.35f + 0.65f * ou), pq)
+            p.glow(4, ox, oy, 28f * ds * ou * pw * pulse, 0.55f * g)               // orb: hot white centre, gradient to the cool edge
             p.glow(2, ox, oy, 20f * ds * ou * pw * pulse, 0.7f * g)
             p.glow(1, ox, oy, 15f * ds * ou * pw * pulse, 0.85f * g)
             p.glow(0, ox, oy, 9f * ds * ou * pw, g)
         }
-        // release: flash and a ring that flies outwards, changing colour along the gradient
+        // the moment the breath leaves the mouth: a flash at the mouth tip
         if (!charging && ft in 0f..0.4f) {
             val rp = ft / 0.4f; val rl = 1f - rp
-            p.glow(0, orbP[0], orbP[1], (10f + 14f * rl) * ds * pw, rl)
-            p.glow(1, orbP[0], orbP[1], (18f + 26f * rp) * ds * pw, rl * 0.9f)
-            p.glow(3, orbP[0], orbP[1], (30f + 30f * rp) * ds * pw, rl * 0.5f)
-            p.ring(orbP[0], orbP[1], (8f + 52f * rp) * ds * pw, (rp * 5f).toInt(), max(1.5f, 2.4f * ds * rl), rl * 0.85f)
+            p.glow(0, tipP[0], tipP[1], (10f + 14f * rl) * ds * pw, rl)
+            p.glow(1, tipP[0], tipP[1], (18f + 26f * rp) * ds * pw, rl * 0.9f)
+            p.glow(3, tipP[0], tipP[1], (30f + 30f * rp) * ds * pw, rl * 0.5f)
+        }
+    }
+
+    /**
+     * Glowing particles pulled into the throat: they start on a wide circle, curve inward in a spiral, speed up as they get closer,
+     * leave a short trail, shrink and merge into the orb. They are coloured from the cool edge of the flame gradient to the hot core.
+     */
+    private fun implode(ox: Float, oy: Float, strength: Float, pq: Float) {
+        if (strength <= 0.02f) return
+        val np = (14 + 16 * pq).toInt()
+        for (j in 0 until np) {
+            val cyc = time * 1.3f + j * 0.618034f
+            val ci = cyc.toInt()
+            val f = cyc - ci
+            val a0 = hash(ci, j, 21) * 6.2832f
+            val r0 = (22f + 28f * hash(ci, j, 22)) * ds
+            val f2 = max(0f, f - 0.1f)
+            val aa = a0 + 1.9f * f * f; val rr = r0 * (1f - f * f)
+            val ab = a0 + 1.9f * f2 * f2; val rb = r0 * (1f - f2 * f2)
+            val px = ox + cos(aa) * rr; val py = oy + sin(aa) * rr
+            trl[0] = ox + cos(ab) * rb; trl[1] = oy + sin(ab) * rb; trl[2] = px; trl[3] = py
+            val e = sm(0f, 0.12f, f) * (1f - sm(0.9f, 1f, f)) * strength
+            if (e <= 0.01f) continue
+            val ci2 = (((1f - f) * 4f).toInt() + j % 3).coerceIn(0, 7)
+            val sz = (4.5f + 3f * (1f - f)) * ds
+            p.halo(px, py, sz * 1.5f, e * 0.45f)
+            p.lines(trl, 4, ci2, max(1.4f, 2.2f * ds), e * 0.9f)
+            p.glow(ci2, px, py, sz, e)
+            p.glow(0, px, py, sz * 0.45f, e)
         }
     }
 
@@ -234,28 +275,32 @@ class ChargeFx(private val model: DragonModel, private val p: Painter) {
                 3 -> { px = (ex + sx) * 0.5f; py = (ey + sy) * 0.5f }
                 else -> { px = sx; py = sy }
             }
-            node(px, py, 0.55f + q * 0.1125f, if (q == 0) 1.4f else 1f, pass, seed)
+            node(px, py, 0.55f + q * 0.1125f, if (q == 0) 1.4f else 1f, pass, seed, false)
         }
         for (f in 0 until 4) {                                                       // finger bones
             val tx = w[6 + 2 * f]; val ty = w[7 + 2 * f]
             for (j in 0 until 5) {
                 val q = j / 5f
-                node(tx + (wx - tx) * q, ty + (wy - ty) * q, q * 0.55f, if (j == 0) 1.35f else 1f, pass, seed + f)
+                node(tx + (wx - tx) * q, ty + (wy - ty) * q, q * 0.55f, if (j == 0) 1.35f else 1f, pass, seed + f, j == 0)
             }
         }
     }
 
-    /** One glowing point on a wing bone. xc = position along the path (0 claw tip .. 1 shoulder). pass 0 = dark halo, pass 1 = glow. */
-    private fun node(x: Float, y: Float, xc: Float, size: Float, pass: Int, seed: Int) {
-        val d = xw - xc + 0.04f
-        val lit = sm(0f, 0.08f, d)
-        val flash = sm(0f, 0.05f, d) * (1f - sm(0.05f, 0.3f, d))
+    /**
+     * One glowing point on a wing bone. xc = position along the path (0 claw tip .. 1 shoulder). pass 0 = dark halo, pass 1 = glow.
+     * src = the claw tip itself: a steady source that sends out the waves.
+     */
+    private fun node(x: Float, y: Float, xc: Float, size: Float, pass: Int, seed: Int, src: Boolean) {
+        val wv = waveSum(xc)
+        val lit = sm(0f, 0.08f, x0w - xc + 0.04f)
         val fl = 0.85f + 0.15f * sin(time * rate + xc * 9f + seed)
-        val b = max(min(1f, lit * 0.72f * build * fl + flash * 0.95f) * amt, soft * lit * fl)
+        var b = min(1f, lit * (0.2f + 0.14f * build) * fl + wv * (0.5f + 0.4f * build))
+        if (src) b = max(b, 0.62f * fl)
+        b *= amt
         if (b <= 0.01f) return
         if (pass == 0) { p.halo(x, y, 9f * ds * size, b * 0.4f); return }
         val g = xc * 0.85f                                                           // cool at the claw tip, hot near the shoulder
-        p.glow(gi(g), x, y, 12f * ds * size * (0.85f + 0.3f * flash), b * 0.5f)
+        p.glow(gi(g), x, y, 12f * ds * size * (0.85f + 0.4f * min(1f, wv)), b * 0.5f)
         p.glow(gi(g + 0.25f), x, y, 6.5f * ds * size, b * 0.9f)
         p.glow(0, x, y, 2.8f * ds * size, b)
     }

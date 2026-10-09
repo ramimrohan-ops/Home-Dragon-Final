@@ -530,9 +530,27 @@ class DragonView(context: Context) : View(context) {
     /** Quality or speed slider moved: nothing to re-layout. */
     fun reloadSettings() = loadSettings()
 
+    // The dragon's size follows the normal app icon size and stays the same on every home screen page.
+    private var lockSize = 0f
+    private var lockStreak = 0
+    private var lockW = 0
+    private var lockH = 0
+
+    /** Width of a normal app icon on this page: a low percentile, so widgets and big folders do not pull it up. */
+    private fun iconWidth(list: List<Float>): Float {
+        val s = list.sorted()
+        return s[(s.size * 0.4f).toInt().coerceIn(0, s.size - 1)]
+    }
+
     private fun applyScale() {
         loadSettings()
-        size = medianWidth(icons.map { it.r.width() })
+        val m = iconWidth(icons.map { it.r.width() })
+        if (lockSize <= 0f || width != lockW || height != lockH) {
+            lockSize = m; lockStreak = 0; lockW = width; lockH = height            // first page, or the screen changed (rotation, resize)
+        } else if (abs(m - lockSize) > lockSize * 0.2f) {
+            if (++lockStreak >= 3) { lockSize = m; lockStreak = 0 }                 // the launcher grid really changed: take the new size
+        } else lockStreak = 0
+        size = lockSize
         for (c in icons) c.big = c.r.width() > size * 1.5f
         sc = size / 58f
         ds = sc * 0.55f * (Prefs.scalePct(context) / 100f)
@@ -986,10 +1004,12 @@ class DragonView(context: Context) : View(context) {
                 firing = true
                 t += if (t < chargeT) rdt else dt       // the charge-up runs in real seconds, whatever the dragon speed
                 val c = ic(target)
-                // charge-up first (see drawCharge), then the breath; the mouth opens halfway while the orb grows
+                // charge-up first (see drawCharge), then the breath; with a charge-up the mouth is fully open for all of it
                 val ft = t - chargeT
                 fireFt = ft
-                st.mouth = if (ft < 0f) 0.5f * smooth(chargeT * 0.7f, chargeT, t) else clampF(min(0.5f + ft / 0.5f, (fireDur - ft) / 0.25f), 0f, 1f)
+                st.mouth = if (ft < 0f) smooth(0f, min(0.25f, chargeT), t)
+                    else if (chargeT > 0.05f) clampF((fireDur - ft) / 0.25f, 0f, 1f)
+                    else clampF(min(0.5f + ft / 0.5f, (fireDur - ft) / 0.25f), 0f, 1f)
                 model.headLocal(st.sp, st.walk, hl); val hx = hl[0]; val hy = hl[1]
                 val ang = atan2(c.cy - (st.y + (hy + st.bob) * ds), max(8f, abs(c.cx - (st.x + st.face * hx * ds))))
                 headGoal = clampF(ang, -0.6f, 1.0f)
@@ -1229,8 +1249,11 @@ class DragonView(context: Context) : View(context) {
         if (chargeT <= 0.05f) return
         val firing = mode == Mode.FIRE
         fxCanvas = c
-        chargeFx.draw(st, ds, time, chargeT, if (firing) clampF(t / chargeT, 0f, 1f) else 1f, if (firing) fireFt else 99f,
-            firing && fireFt < 0f, chSpark, pq)
+        // ft = seconds since the breath began, fe = seconds since it ended (after the breath chSpark runs 1 -> 0 over one second)
+        val fe = if (firing) fireFt - fireDur else 1f - chSpark
+        val ft = if (firing) fireFt else fireDur + fe
+        chargeFx.draw(st, ds, time, chargeT, if (firing) clampF(t / chargeT, 0f, 1f) else 1f, ft, fe, fireDur,
+            firing && fireFt < 0f, pq)
         fxCanvas = null
     }
 

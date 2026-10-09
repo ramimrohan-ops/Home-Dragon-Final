@@ -331,7 +331,7 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
         if (!geomReady) return
         nf = 0; ns = 0; acc = 0f; heat = 0f; mouth = 0f; cyc = 0.45f
         if (chargeS > 0.05f) {                      // still picture of the charge: the orb is gathering in the mouth
-            cyc = 0.3f + 0.88f * chargeS; mouth = 0.5f
+            cyc = 0.3f + 0.88f * chargeS; mouth = 1f
             return
         }
         for (i in 0 until 66) step(1f / 60f)
@@ -343,7 +343,8 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
         cyc += dt
         while (cyc >= CYCLE + off) { cyc -= CYCLE + off; if (loopsLeft > 0) loopsLeft--; if (stopReq) wrapStop = true }
         val firing = cyc in (0.45f + off)..(2.1f + off)
-        val mouthGoal = if (cyc in (0.3f + off)..(2.25f + off)) 1f else if (off > 0.05f && cyc in (0.3f + off * 0.7f)..(0.3f + off)) 0.5f else 0f
+        // the mouth is fully open from the start of the charge-up to the end of the breath
+        val mouthGoal = if (cyc in 0.3f..(2.25f + off)) 1f else 0f
         mouth += (mouthGoal - mouth) * min(1f, dt * 12f)
         heat = if (firing && cyc > 0.7f + off) min(1f, heat + dt * 2.2f) else max(0f, heat - dt * 0.8f)
 
@@ -670,10 +671,10 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
         if (off <= 0.05f || cyc < 0.3f) return
         val ft = cyc - (0.3f + off)                       // time since the breath started (negative while charging)
         val u = ((cyc - 0.3f) / off).coerceIn(0f, 1f)
-        // electric arcs: full during the breath, then fading to zero in one second
-        val spark = if (ft < 1.8f) 1f else (1f - (ft - 1.8f) / 1f).coerceIn(0f, 1f)
+        // the breath lasts from 0.3 + off to 2.25 + off; after it everything fades out in one second
+        val fireDur = 1.95f
         fxCanvas = c
-        chargeFx.draw(st, st.ds, t, off, u, ft, ft < 0f, spark, 1f)
+        chargeFx.draw(st, st.ds, t, off, u, ft, ft - fireDur, fireDur, ft < 0f, 1f)
         fxCanvas = null
     }
 
