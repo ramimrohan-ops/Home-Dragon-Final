@@ -10,12 +10,12 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * A short event log saved on the phone (last 16 events). It survives the app being killed, so after a lock/unlock you can see
+ * A short event log saved on the phone (last 50 events). It survives the app being killed, so after a lock/unlock you can see
  * in the app what really happened: did the dragon service stop, did the icon finder disconnect, was the app process restarted.
  * It stores only event names and times, nothing else.
  */
 object Diag {
-    private const val MAX = 16
+    private const val MAX = 50
 
     private fun sp(c: Context) = c.applicationContext.getSharedPreferences("dragon_diag", Context.MODE_PRIVATE)
 

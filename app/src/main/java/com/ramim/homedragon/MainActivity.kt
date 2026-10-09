@@ -53,6 +53,7 @@ class MainActivity : Activity() {
     private val setupRows = ArrayList<SetupRow>()
     private val sliders = ArrayList<Slider>()
     private var flamePreview: PreviewView? = null
+    private var logTab = false
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
@@ -391,6 +392,19 @@ class MainActivity : Activity() {
         val health = card()
         val hHead = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
         hHead.addView(text("Dragon health", 12f, MUTED, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        hHead.addView(text("Copy log", 12f, TEAL, true).apply {
+            setPadding(dp(8), dp(4), dp(8), dp(4))
+            isClickable = true
+            setOnClickListener {
+                try {
+                    val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                    cm.setPrimaryClip(android.content.ClipData.newPlainText("Home Dragon log", "Home Dragon " + (try { packageManager.getPackageInfo(packageName, 0).versionName } catch (_: Throwable) { "" }) + "\n" + healthText.text))
+                    Toast.makeText(this@MainActivity, "Log copied", Toast.LENGTH_SHORT).show()
+                } catch (_: Throwable) {
+                    Toast.makeText(this@MainActivity, "Could not copy", Toast.LENGTH_SHORT).show()
+                }
+            }
+        })
         hHead.addView(text("Clear log", 12f, ORANGE, true).apply {
             setPadding(dp(8), dp(4), 0, dp(4))
             isClickable = true
@@ -403,6 +417,45 @@ class MainActivity : Activity() {
         }
         health.addView(healthText)
         col.addView(health)
+
+        // two tabs under the header: "Dragon" (everything above) and "Log" (the health card), so the main screen stays short
+        val pageMain = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val pageLog = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE }
+        val kids = ArrayList<View>()
+        for (i in 1 until col.childCount) kids.add(col.getChildAt(i))
+        col.removeViews(1, col.childCount - 1)
+        for (k in kids) if (k === health) pageLog.addView(k) else pageMain.addView(k)
+        val tabDragon = text("Dragon", 14f, FG, true).apply { gravity = Gravity.CENTER; isClickable = true }
+        val tabLog = text("Log", 14f, MUTED, true).apply { gravity = Gravity.CENTER; isClickable = true }
+        val tabBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            background = shape(CARD, 14, STROKE)
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+            addView(tabDragon, LinearLayout.LayoutParams(0, dp(38), 1f))
+            addView(tabLog, LinearLayout.LayoutParams(0, dp(38), 1f))
+        }
+        var tabsReady = false
+        fun selectTab(log: Boolean) {
+            logTab = log
+            pageMain.visibility = if (log) View.GONE else View.VISIBLE
+            pageLog.visibility = if (log) View.VISIBLE else View.GONE
+            tabDragon.background = if (log) null else shape(STROKE, 10)
+            tabLog.background = if (log) shape(STROKE, 10) else null
+            tabDragon.setTextColor(if (log) MUTED else FG)
+            tabLog.setTextColor(if (log) FG else MUTED)
+            try {
+                if (!tabsReady) return
+                if (log) { sliders.forEach { it.release() }; flamePreview?.stop(); refresh() } else flamePreview?.start()
+            } catch (_: Throwable) {
+            }
+        }
+        tabDragon.setOnClickListener { selectTab(false) }
+        tabLog.setOnClickListener { selectTab(true) }
+        selectTab(false)
+        tabsReady = true
+        col.addView(tabBar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(14) })
+        col.addView(pageMain)
+        col.addView(pageLog)
 
         val scroll = ScrollView(this).apply {
             setBackgroundColor(BG)
@@ -477,7 +530,7 @@ class MainActivity : Activity() {
         })
         DragonService.appOpen = true
         DragonService.instance?.refreshHold()
-        try { flamePreview?.start() } catch (_: Throwable) {}
+        try { if (!logTab) flamePreview?.start() } catch (_: Throwable) {}
         // the icon finder was switched on in Android's settings before the user agreed here: show the disclosure now
         if (intent?.getBooleanExtra("a11y_disclosure", false) == true) {
             intent.removeExtra("a11y_disclosure")
@@ -582,6 +635,16 @@ class MainActivity : Activity() {
     private fun isSamsung() = Build.MANUFACTURER.equals("samsung", ignoreCase = true)
 
     private fun openBackgroundSettings() {
+        // First tap: Android's own "allow always running" prompt (a small system pop-up). Once allowed, the next tap opens the phone's battery pages.
+        val pm = getSystemService(POWER_SERVICE) as PowerManager
+        if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+            try {
+                startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
+                return
+            } catch (_: Throwable) {
+                // not available on this phone: use the battery pages below
+            }
+        }
         if (isSamsung()) {
             // Samsung One UI: Battery > Background usage limits > Never sleeping apps. The page behind these names changes between
             // One UI versions and they are not public, so each is tried in turn and the app info page is the safe fallback.
