@@ -102,7 +102,7 @@ class IconFinderService : AccessibilityService() {
      * The top window cannot be read. This used to count as "not home" and the dragon faded out and paused. Now, in this order:
      * 1. a fresh icon scan finds the home screen icons -> home, keep going;
      * 2. the last window change event names a package: the launcher -> keep going, another app -> hide;
-     * 3. nothing says which app it is: keep what the dragon is doing for 5 seconds, then hide.
+     * 3. nothing says which app it is: keep what the dragon is doing, with no time limit, until something known arrives.
      * Returns null for "no change".
      */
     private fun decideUnreadable(launcher: String): Boolean? {
@@ -128,18 +128,10 @@ class IconFinderService : AccessibilityService() {
                     false
                 }
             }
-            if (unreadableSince == 0L) {
-                unreadableSince = now
-                handler.removeCallbacks(graceRun)
-                handler.postDelayed(graceRun, 5000L)
-            }
-            if (now - unreadableSince < 5000L) {
-                keeping = true
-                unreadableLog("Unreadable window in front: kept going for up to 5 s")
-                return null
-            }
-            unreadableLog("Unreadable window still in front after 5 s: hidden")
-            return false
+            // nothing says which app it is: no change, the dragon keeps doing what it was doing (no time limit)
+            keeping = true
+            unreadableLog("Unreadable window in front, no package name: kept going")
+            return null
         } finally {
             deciding = false
         }
@@ -333,14 +325,14 @@ class IconFinderService : AccessibilityService() {
 
         // No icons for two settled scans in a row also means the home screen is covered (recents etc.).
         val settled = System.currentTimeMillis() - lastScrollMs > 600
-        if (found.size >= 4) missCount = 0 else if (settled) missCount++
+        if (found.size >= 2) missCount = 0 else if (settled) missCount++
         // a recents flag from an event is dropped once icons are plainly visible again for a while
-        val evtStale = recentsEvt && found.size >= 4 && !sawRecents && System.currentTimeMillis() - recentsEvtAt > (if (force) 800 else 4000)
+        val evtStale = recentsEvt && found.size >= 2 && !sawRecents && System.currentTimeMillis() - recentsEvtAt > (if (force) 800 else 4000)
         if (evtStale) recentsEvt = false
         val nowRecents = sawRecents || missCount >= 2
         val changed = nowRecents != recentsNode || evtStale
         recentsNode = nowRecents
-        if (found.size >= 4 && !sawRecents) {
+        if (found.size >= 2 && !sawRecents) {
             lastIconsMs = System.currentTimeMillis()
             IconRegistry.icons = found
             if (!IconRegistry.onHome) {

@@ -323,3 +323,7 @@ Android blocks accessibility services of apps installed outside an app store. Th
   3. nothing says which app it is -> the dragon keeps doing what it was doing for 5 seconds, then hides if the window is still unreadable.
 - Screen off or locked, and the Home Dragon app being open, pause it as before.
 - New Log tab lines say which step decided, e.g. "Unreadable window in front: the icon scan found the home screen, kept going" or "Unreadable window from <package> in front: hidden".
+
+## v3.5 - no time limit for an unreadable window, home needs two icons
+- **Unreadable window with no package name:** the dragon keeps doing what it was doing, with no 5-second limit (v3.4 hid it after 5 s). It changes only when something known arrives: a readable window, a window event that names a package, or an icon scan. The scan and the package-name steps of v3.4 are unchanged. Log line: "Unreadable window in front, no package name: kept going". Screen off or locked, and the Home Dragon app being open, still pause it.
+- **Two icons are enough for the home screen** (it used to be four). Changed in all four places: the scan's "nothing found" counter, the clearing of an old recents flag, the home decision, and the page-change detection in the dragon. A page with one or two icons, or mostly widgets, is now recognised as home; a screen with a few labelled tappable items (an open folder, a search panel) may now count as home too.

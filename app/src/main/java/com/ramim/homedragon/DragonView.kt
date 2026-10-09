@@ -591,7 +591,7 @@ class DragonView(context: Context) : View(context) {
         }
         icons = newIcons
         applyScale()
-        val pageChanged = placed && icons.size >= 4 && matched < newIcons.size * 0.4f
+        val pageChanged = placed && icons.size >= 2 && matched < newIcons.size * 0.4f
         if (!placed) {
             placed = true
             land(Random.nextInt(icons.size), true)
