@@ -333,3 +333,9 @@ Android blocks accessibility services of apps installed outside an app store. Th
 - **Unreadable window in front: restart every 1 s.** While the top window is unreadable (no package name), a light restart runs every second. It stops when the launcher is found (a readable launcher window, or an icon scan with 2 or more icons = home screen or app drawer), when the window becomes readable, when the screen goes off, when an app is open, or when the Icon finder is off.
 - Log tab: one line when the series starts and one when it ends.
 - The normal scan on launcher events and the v3.4/v3.5 decision rules are unchanged.
+
+## v4.0 - automatic restarts removed
+- **Removed** everything added in v3.6: the restart 1 s after unlock, the extra restart when the launcher becomes reachable, and the light restart every 1 s while the front window is unreadable (with their Log lines).
+- **Removed** the extra re-checks the dragon service scheduled after every unlock or screen-on (0.3, 0.9, 2, 4 and 8 s).
+- **Kept** the unlock detection itself: the unlock broadcast ("Unlocked") and "Unlock found by checking (no unlock broadcast)".
+- **Kept** the v3.4/v3.5 rules (an unreadable window no longer hides the dragon, two icons = home screen) and the icon finder's own normal re-checks after a window change while the dragon is hidden.

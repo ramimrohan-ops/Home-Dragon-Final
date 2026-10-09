@@ -7,7 +7,6 @@ import android.graphics.RectF
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
-import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
@@ -53,8 +52,6 @@ class IconFinderService : AccessibilityService() {
         IconRegistry.powerDialog = null
         handler.removeCallbacks(rc1); handler.removeCallbacks(rc2); handler.removeCallbacks(rc3); handler.removeCallbacks(graceRun)
         IconRegistry.recheck = null
-        IconRegistry.unreadableFront = false
-        DragonService.instance?.stopUnreadableSeries("Icon finder disconnected: auto restart stopped")
         IconRegistry.serviceActive = false
         IconRegistry.icons = emptyList()
         IconRegistry.listener?.invoke()
@@ -83,15 +80,9 @@ class IconFinderService : AccessibilityService() {
         keeping = false
         val launcher = IconRegistry.launcherPkg ?: return null
         val p = topAppPackage() ?: return null
-        if (p.isEmpty()) {                               // unreadable window on top: do not just hide the dragon, see below
-            IconRegistry.unreadableFront = true
-            DragonService.instance?.startUnreadableSeries()   // a light restart every second until the launcher is found
-            return decideUnreadable(launcher)
-        }
-        IconRegistry.unreadableFront = false
+        if (p.isEmpty()) return decideUnreadable(launcher)   // unreadable window on top: do not just hide the dragon, see below
         unreadableSince = 0L
         lastUnreadLog = ""
-        if (p == launcher && !recents) launcherFound()    // the launcher window is readable: home screen or app drawer
         return p == launcher && !recents
     }
 
@@ -102,13 +93,6 @@ class IconFinderService : AccessibilityService() {
     private var lastWinPkg: String? = null  // package of the last window change event (it is known even when the window cannot be read)
     private var lastUnreadLog = ""
     private val graceRun = Runnable { refreshHome() }
-
-    /** The launcher is readable, or its icons were found (home screen or app drawer): stops the one-second restarts and finishes an unlock restart. */
-    private fun launcherFound() {
-        IconRegistry.launcherSeenAt = SystemClock.elapsedRealtime()
-        IconRegistry.unreadableFront = false
-        DragonService.instance?.onLauncherFound()
-    }
 
     private fun unreadableLog(msg: String) {
         if (msg != lastUnreadLog) { lastUnreadLog = msg; Diag.log(this, msg) }
@@ -350,7 +334,6 @@ class IconFinderService : AccessibilityService() {
         recentsNode = nowRecents
         if (found.size >= 2 && !sawRecents) {
             lastIconsMs = System.currentTimeMillis()
-            launcherFound()
             IconRegistry.icons = found
             if (!IconRegistry.onHome) {
                 IconRegistry.onHome = true                         // the front window is the launcher and shows its icons: it is the home screen
