@@ -91,6 +91,98 @@ class DragonService : Service() {
         handler.postDelayed(hiddenPoll, 1000)
     }
 
+    // ---- auto restarts ----
+    private var overlayLp: WindowManager.LayoutParams? = null
+
+    /** Is the dragon showing and moving normally right now? Then a restart would only make it blink. */
+    private fun showingNormally() = view?.visibility == View.VISIBLE && IconRegistry.onHome && screenActive && !appOpen
+
+    /** Restart the dragon: put the overlay back if it is missing, restart the frame loop (heavy only), decide again whether the home screen is in front and rescan the icons. */
+    private fun autoRestart(heavy: Boolean) {
+        val v = view ?: return
+        if (appOpen) return
+        val lp = overlayLp
+        if (!v.isAttachedToWindow && lp != null) {
+            try { wm.addView(v, lp) } catch (_: Exception) {}
+        }
+        if (heavy) v.pause()
+        apply()
+        IconRegistry.recheck?.invoke()
+    }
+
+    // After an unlock: one restart 1 s later, and when the launcher could not be reached then, one more as soon as it can (within 30 s).
+    private var unlockRoundAt = 0L
+    private var waitReach = false
+    private val unlockRestart1 = Runnable {
+        if (!screenActive || appOpen) { unlockRoundAt = 0L; return@Runnable }
+        val reachable = SystemClock.elapsedRealtime() - IconRegistry.launcherSeenAt < 2000
+        if (showingNormally() && reachable) {
+            Diag.log(this, "Unlock: the dragon is already showing, restart skipped")
+            unlockRoundAt = 0L
+            return@Runnable
+        }
+        autoRestart(true)
+        if (reachable) {
+            Diag.log(this, "Auto restart after unlock (1.0 s)")
+            unlockRoundAt = 0L
+        } else {
+            Diag.log(this, "Auto restart after unlock (1.0 s); launcher not reachable yet, waiting up to 30 s for a second one")
+            waitReach = true
+            handler.postDelayed(unlockGiveUp, 29_000)
+        }
+    }
+    private val unlockGiveUp = Runnable {
+        if (waitReach) { waitReach = false; Diag.log(this, "Launcher still not reachable 30 s after unlock: stopped waiting") }
+        unlockRoundAt = 0L
+    }
+
+    private fun onUnlockDetected() {
+        val now = SystemClock.elapsedRealtime()
+        if (unlockRoundAt != 0L && now - unlockRoundAt < 31_000) return       // one round at a time
+        unlockRoundAt = now
+        waitReach = false
+        handler.removeCallbacks(unlockRestart1); handler.removeCallbacks(unlockGiveUp)
+        handler.postDelayed(unlockRestart1, 1000)
+    }
+
+    /** Called by the icon finder whenever the launcher is readable or its icons were found (home screen or app drawer). */
+    fun onLauncherFound() {
+        stopUnreadableSeries("Launcher found (home or app drawer): auto restart stopped")
+        if (waitReach) {
+            waitReach = false
+            handler.removeCallbacks(unlockGiveUp)
+            unlockRoundAt = 0L
+            if (showingNormally()) Diag.log(this, "Launcher reachable, the dragon is already showing: second restart skipped")
+            else { Diag.log(this, "Launcher reachable, second restart after unlock"); autoRestart(true) }
+        }
+    }
+
+    // While the front window is unreadable: a light restart (overlay check, home decision, icon rescan) every second, until the launcher is found.
+    private var seriesOn = false
+    private val seriesTask = object : Runnable {
+        override fun run() {
+            if (!seriesOn) return
+            if (view == null || appOpen || !screenActive || !IconRegistry.serviceActive) { stopUnreadableSeries("Auto restart stopped (screen off, app open or icon finder off)"); return }
+            if (!IconRegistry.unreadableFront) { stopUnreadableSeries("Unreadable window gone: auto restart stopped"); return }
+            autoRestart(false)
+            if (seriesOn) handler.postDelayed(this, 1000)
+        }
+    }
+
+    fun startUnreadableSeries() {
+        if (seriesOn || view == null || appOpen || !screenActive) return
+        seriesOn = true
+        Diag.log(this, "Unreadable window in front: auto restart every 1 s")
+        handler.postDelayed(seriesTask, 1000)
+    }
+
+    fun stopUnreadableSeries(msg: String) {
+        if (!seriesOn) return
+        seriesOn = false
+        handler.removeCallbacks(seriesTask)
+        Diag.log(this, msg)
+    }
+
     private fun startUnlockPoll() {
         pollUntil = SystemClock.elapsedRealtime() + 120_000
         handler.removeCallbacks(unlockPoll)
@@ -107,7 +199,7 @@ class DragonService : Service() {
                     Diag.log(c, if (screenActive) "Screen on, no lock screen" else "Screen on, lock screen showing")
                     startUnlockPoll()
                 }
-                Intent.ACTION_USER_PRESENT -> { screenActive = true; Diag.log(c, "Unlocked") }
+                Intent.ACTION_USER_PRESENT -> { screenActive = true; Diag.log(c, "Unlocked"); onUnlockDetected() }
             }
             apply()
             if (i.action != Intent.ACTION_SCREEN_OFF) {
@@ -155,6 +247,7 @@ class DragonService : Service() {
             lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
         }
         requestHighRefresh(lp)
+        overlayLp = lp
         try {
             wm.addView(v, lp)
         } catch (e: Exception) {
@@ -215,6 +308,7 @@ class DragonService : Service() {
         if (!screenActive && liveActive()) {       // the unlock broadcast never came, but the phone is unlocked and awake
             screenActive = true
             Diag.log(this, "Unlock found by checking (no unlock broadcast)")
+            onUnlockDetected()
         }
         if (!screenActive) {                       // screen off or locked: stop everything at once
             v.visibility = View.GONE
@@ -249,6 +343,8 @@ class DragonService : Service() {
         handler.removeCallbacks(recheckTask)
         handler.removeCallbacks(unlockPoll)
         handler.removeCallbacks(hiddenPoll)
+        handler.removeCallbacks(unlockRestart1); handler.removeCallbacks(unlockGiveUp); handler.removeCallbacks(seriesTask)
+        seriesOn = false
         hiddenPollOn = false
         // Prefs.enabled is only switched off by the Stop button, so "still on" here means Android stopped the service.
         Diag.log(this, if (Prefs.enabled(this)) "Dragon service stopped by the system" else "Dragon service stopped by you")

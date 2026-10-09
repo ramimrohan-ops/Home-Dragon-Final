@@ -14,6 +14,8 @@ object IconRegistry {
     var swipeListener: (() -> Unit)? = null             // launcher page is scrolling sideways (main thread)
     @Volatile var homeWhy: String = ""                 // why the home screen was last judged hidden (for the health log)
     var powerDialog: (() -> Boolean)? = null            // opens the phone's power menu (set by the icon finder, Android 12+)
+    @Volatile var unreadableFront: Boolean = false      // the top window cannot be read right now (the dragon restarts lightly every second until the launcher is found)
+    @Volatile var launcherSeenAt: Long = 0L             // SystemClock.elapsedRealtime() of the last time the launcher was readable or its icons were found
     var recheck: (() -> Unit)? = null                   // asks the icon finder to look again at what is in front (e.g. right after unlock)
 }
 
