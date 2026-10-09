@@ -303,3 +303,8 @@ Android blocks accessibility services of apps installed outside an app store. Th
 - **New slider "Charge-up quality"** (10..100%, default 100%, with its own preview box) under Charge-up time. One slider scales three things together: sparks at a time (12 at 100%, 6 at 50%, 1 at 10%), imploding particles (120 / 60 / 12) and waves on each bone (about 3 / 2 / 1). The Particles slider no longer changes the charge-up. With Charge-up time Off the quality slider does nothing.
 - **No fire in the mouth before the breath:** the flame glow inside the mouth (and the flare in the preview) only appears when the breath starts. During the charge-up the mouth shows only the charge building.
 - **Mouth:** fully open through the charge-up and the whole breath (this replaces the 40% of v3.0), then it closes slowly (about 0.8 s). With Charge-up time Off nothing changes.
+
+## v3.2 - the orb is finished right before the breath
+- **Orb complete at 85% of the charge-up time** (it used to reach full size only at the instant the breath started). For the last 15% the finished orb holds, a little brighter and throbbing, and then the breath starts.
+- **Imploding particles thin out and stop** arriving by 85%. No particles are pulled in during the breath; the orb just shrinks through the breath as before. Home screen and charge-up previews.
+- With a short Charge-up time (0.5 s) the hold is only about 0.08 s; at 3.0 s it is about 0.45 s.

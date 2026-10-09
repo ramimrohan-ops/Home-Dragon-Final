@@ -199,13 +199,14 @@ class ChargeFx(private val model: DragonModel, private val p: Painter) {
         // the middle of the open mouth, behind the teeth: all the charge gathers here (it follows how far the mouth is open)
         model.mouthPoint(st, 26f, 3.5f + 6.5f * st.mouth.coerceIn(0f, 1f), orbP)
         model.mouthPoint(st, 36f, 3f, tipP)
-        val gt = ((u - 0.45f) / 0.55f).coerceIn(0f, 1f)
+        val gt = ((u - 0.45f) / 0.40f).coerceIn(0f, 1f)                        // the orb is complete at 85% of the charge-up
         val g = if (charging) sm(0f, 1f, gt) else fade
         // the orb grows while charging, then shrinks steadily through the breath: smallest when the breath ends
         val ou = if (charging) 0.15f + 0.85f * g else 1f - 0.88f * (ft / max(0.1f, fireDur)).coerceIn(0f, 1f)
         if (g > 0.01f && n > 1) {
             val arr = min(1f, waveSum(1.3f))                                       // a wave reaching the mouth makes the orb throb
-            val pulse = (0.9f + 0.1f * sin(time * rate)) * (1f + 0.12f * arr)
+            val hold = if (charging) sm(0.83f, 0.9f, u) else 0f                    // the last 15% of the charge: the finished orb holds, brighter and throbbing
+            val pulse = (0.9f + (0.1f + 0.08f * hold) * sin(time * rate)) * (1f + 0.12f * arr + 0.08f * hold)
             val ox = orbP[0] + sin(time * 61f) * 0.8f * ds * ou; val oy = orbP[1] + cos(time * 53f) * 0.8f * ds * ou
             p.halo(ox, oy, 24f * ds * pw * ou, 0.6f * g)
             val lb = max(chB[n - 1], 0.5f * g)
@@ -216,7 +217,7 @@ class ChargeFx(private val model: DragonModel, private val p: Painter) {
                 p.glow(2, px, py, 6f * ds, (1f - f) * 0.5f * lb * g)
             }
             p.halo(ox, oy, 46f * ds * pw, 0.35f * g)                               // one shared dark halo behind the whole swarm
-            implode(ox, oy, g * (0.35f + 0.65f * ou), cq)
+            if (charging) implode(ox, oy, g, cq, 1f - sm(0.6f, 0.85f, u))        // particles thin out and stop arriving by 85%; none during the breath
             p.glow(4, ox, oy, 28f * ds * ou * pw * pulse, 0.55f * g)               // orb: hot white centre, gradient to the cool edge
             p.glow(2, ox, oy, 20f * ds * ou * pw * pulse, 0.7f * g)
             p.glow(1, ox, oy, 15f * ds * ou * pw * pulse, 0.85f * g)
@@ -236,9 +237,9 @@ class ChargeFx(private val model: DragonModel, private val p: Painter) {
      * centre, speeding up steadily (constant pull), with a straight streak behind it that is longer the faster it goes. On arrival it
      * shrinks into the orb. 120 particles at 100% quality (cq), 12 at 10%. Coloured from the cool to the hot end of the flame gradient.
      */
-    private fun implode(ox: Float, oy: Float, strength: Float, cq: Float) {
-        if (strength <= 0.02f) return
-        val np = (120f * cq.coerceIn(0.1f, 1f)).roundToInt().coerceIn(12, 120)
+    private fun implode(ox: Float, oy: Float, strength: Float, cq: Float, thin: Float) {
+        if (strength <= 0.02f || thin <= 0.01f) return
+        val np = ((120f * cq.coerceIn(0.1f, 1f)).roundToInt().coerceIn(12, 120) * thin).toInt()
         for (j in 0 until np) {
             val cyc = time * 1.3f + j * 0.618034f
             val ci = cyc.toInt()
