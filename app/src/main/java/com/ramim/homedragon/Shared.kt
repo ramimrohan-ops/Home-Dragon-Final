@@ -14,7 +14,7 @@ object IconRegistry {
     var swipeListener: (() -> Unit)? = null             // launcher page is scrolling sideways (main thread)
     @Volatile var homeWhy: String = ""                 // why the home screen was last judged hidden (for the health log)
     var powerDialog: (() -> Boolean)? = null            // opens the phone's power menu (set by the icon finder, Android 12+)
-    var recheck: (() -> Unit)? = null                   // asks the icon finder to look again at what is in front (e.g. right after unlock)
+    var recheck: (() -> Unit)? = null                   // asks the icon finder to look again at what is in front (the hidden-dragon poll)
 }
 
 /** Flame colours: up to 6, from the hot core to the cooled tip. The default is the original blue flame. */
@@ -87,8 +87,6 @@ object Prefs {
     fun setTransparencyPct(c: Context, v: Int) = sp(c).edit().putInt("transparency", v).apply()
     fun setWingTransPct(c: Context, v: Int) = sp(c).edit().putInt("wing_transparency", v).apply()
     fun setA11yConsent(c: Context, v: Boolean) = sp(c).edit().putBoolean("a11y_consent", v).apply()
-    fun setCols(c: Context, v: Int) = sp(c).edit().putInt("cols", v).apply()
-    fun setRows(c: Context, v: Int) = sp(c).edit().putInt("rows", v).apply()
     fun setEnabled(c: Context, v: Boolean) = sp(c).edit().putBoolean("enabled", v).apply()
     fun setWelcomeSeen(c: Context, v: Boolean) = sp(c).edit().putBoolean("welcome_seen", v).apply()
     fun setRestartAsked(c: Context, v: Boolean) = sp(c).edit().putBoolean("restart_asked", v).apply()

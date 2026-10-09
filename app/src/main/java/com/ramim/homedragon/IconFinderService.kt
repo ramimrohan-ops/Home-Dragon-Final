@@ -79,16 +79,25 @@ class IconFinderService : AccessibilityService() {
     private fun homeFromWindows(): Boolean? {
         keeping = false
         val launcher = IconRegistry.launcherPkg ?: return null
-        val p = topAppPackage() ?: return null
-        if (p.isEmpty()) return decideUnreadable(launcher)   // unreadable window on top: do not just hide the dragon, see below
-        unreadableSince = 0L
+        val p = topAppPackage()
+        unreadableTop = p == "" && Foreground.granted(this)   // only with usage access: the re-check can then tell which app it is
+        if (p == null) return null
+        if (p.isEmpty()) {                                   // unreadable window on top: do not just hide the dragon
+            val fg = Foreground.current(this)                // usage access names the app even when its window cannot be read
+            if (fg != null && fg != launcher) {
+                unreadableLog("Unreadable window from $fg in front (usage access): hidden")
+                return false
+            }
+            return decideUnreadable(launcher)                // see below
+        }
         lastUnreadLog = ""
         return p == launcher && !recents
     }
 
+    private var unreadableTop = false       // the last window check found an unreadable window on top: window events then re-check it shortly after
+
     private var keeping = false             // the last homeFromWindows() answer was "no change": keep what the dragon is doing
     private var deciding = false            // guards against the scan below calling back into the decision
-    private var unreadableSince = 0L        // when the current unreadable window was first seen (0 = none)
     private var lastIconsMs = 0L            // last time a scan found the home screen icons
     private var lastWinPkg: String? = null  // package of the last window change event (it is known even when the window cannot be read)
     private var lastUnreadLog = ""
@@ -113,13 +122,11 @@ class IconFinderService : AccessibilityService() {
             lastScan = now
             scan(true)
             if (lastIconsMs >= now) {
-                unreadableSince = 0L
                 unreadableLog("Unreadable window in front: the icon scan found the home screen, kept going")
                 return true
             }
             val wp = lastWinPkg
             if (wp != null) {
-                unreadableSince = 0L
                 return if (wp == launcher) {
                     unreadableLog("Unreadable window from the launcher in front: kept going")
                     !recents
@@ -163,14 +170,25 @@ class IconFinderService : AccessibilityService() {
     private var rechecking = false                       // true while a re-check (not a normal event) is running: only used for the log
 
     /**
-     * Look again at what is in front. Called a few times after the phone is unlocked: while the lock screen is up the
-     * launcher window is unreadable, so "home" was set to false, and the window change that follows the unlock can
-     * arrive before the launcher is readable again. Without this the dragon stayed hidden until the app was restarted.
+     * Look again at what is in front. Called by the hidden-dragon poll and shortly after a window change that left the dragon
+     * hidden or met an unreadable window: the launcher can become readable (for example after unlock) without any new event.
+     * With usage access on, the app in front comes straight from Android and no window needs to be walked.
      */
     private fun recheckHome() {
         if (!IconRegistry.serviceActive) return
         val launcher = IconRegistry.launcherPkg ?: return
-        var top = topAppPackage()
+        var top = Foreground.current(this)               // usage access: cheap, and it names apps whose window cannot be read
+        if (top != null && top != launcher) {
+            // Android's list can lag a moment behind: if the focused window really is the launcher, believe the window
+            val active = try { rootInActiveWindow?.packageName?.toString() } catch (e: Exception) { null }
+            if (active != launcher) {
+                unreadableLog("$top in front (usage access): hidden")
+                setHome(false)
+                return
+            }
+            top = launcher
+        }
+        if (top == null) top = topAppPackage()
         if (top == null) top = try { rootInActiveWindow?.packageName?.toString() } catch (e: Exception) { null }
         if (top == "") {                                 // unreadable window: decided by the scan, the window event or the 5 s wait
             homeFromWindows()?.let { setHome(it) }
@@ -206,7 +224,7 @@ class IconFinderService : AccessibilityService() {
             IconRegistry.onHome = h
             IconRegistry.homeWhy = whyNow()
             IconRegistry.listener?.invoke()
-            if (h) queueScan()
+            if (h) { handler.removeCallbacks(rc1); handler.removeCallbacks(rc2); queueScan() }   // home found: no re-check is needed any more
         }
     }
 
@@ -220,7 +238,7 @@ class IconFinderService : AccessibilityService() {
         if (type == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
             homeFromWindows()?.let { setHome(it) }
             DragonService.instance?.resetHiddenBackoff()
-            if (!IconRegistry.onHome) scheduleRechecks()
+            if (!IconRegistry.onHome || unreadableTop) scheduleRechecks()
             return
         }
         val pkg = event.packageName?.toString() ?: return
@@ -236,7 +254,7 @@ class IconFinderService : AccessibilityService() {
             val hw = homeFromWindows()
             if (hw != null) setHome(hw) else if (!keeping) setHome(pkg == launcher && !recents)
             DragonService.instance?.resetHiddenBackoff()
-            if (!IconRegistry.onHome) scheduleRechecks()
+            if (!IconRegistry.onHome || unreadableTop) scheduleRechecks()
         }
         if (event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED && pkg == launcher) {
             val dx = event.scrollDeltaX; val dy = event.scrollDeltaY

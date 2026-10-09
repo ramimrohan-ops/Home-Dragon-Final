@@ -28,7 +28,6 @@ class ChargeFx(private val model: DragonModel, private val p: Painter) {
         fun halo(x: Float, y: Float, half: Float, alpha: Float)
         /** Thin lines (pairs of points: count = number of floats) in gradient colour [colorIdx]. */
         fun lines(pts: FloatArray, count: Int, colorIdx: Int, width: Float, alpha: Float)
-        fun ring(x: Float, y: Float, r: Float, colorIdx: Int, width: Float, alpha: Float)
     }
 
     private val cbx = FloatArray(16); private val cby = FloatArray(16)

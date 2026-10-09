@@ -87,8 +87,6 @@ class DragonView(context: Context) : View(context) {
     private var lookT = 0f
     private var nextLook = 2f
     private var target = 0
-    private var pendKind: String? = null
-    private var pendIdx = -1
     private var acc = 0f
     private var walkTo = 0f
     private var fireDur = 1.7f
@@ -236,7 +234,6 @@ class DragonView(context: Context) : View(context) {
     private var sCore = glow(238, 249, 255)
     private var sCyan = glow(95, 214, 255)
     private var sBlue = glow(48, 110, 255)
-    private val sBlack = glow(0, 0, 0)
     private var sHalo = glow(14, 10, 60)
     // gradient of the flame colours for the charge-up: index 0 = hot core .. 7 = cool tip
     private fun gradCol(cols: IntArray, i: Int): Int {
@@ -245,9 +242,6 @@ class DragonView(context: Context) : View(context) {
     }
     private var chCol = IntArray(8) { gradCol(FlameColors.DEFAULT, it) }
     private var sGrad = Array(8) { glow(Color.red(chCol[it]), Color.green(chCol[it]), Color.blue(chCol[it])) }
-    // charge-up colours (the flame colours; default = the original blue)
-    private var chCore = Color.rgb(238, 249, 255)
-    private var chNear = Color.rgb(95, 214, 255)
     // wispy flame particles, two noise variants per colour stage
     private var fCore = Array(2) { flameSprite(238, 249, 255, 11 + it * 5) }
     // one white flame sprite per variant, tinted along a smooth colour ramp with a colour filter
@@ -305,7 +299,7 @@ class DragonView(context: Context) : View(context) {
         ramp = Array(16) { k -> PorterDuffColorFilter(FlameColors.at(cols, k / 15f * 100f), PorterDuff.Mode.SRC_IN) }
         if (FlameColors.isDefault(cols)) {
             sCore = glow(238, 249, 255); sCyan = glow(95, 214, 255); sBlue = glow(48, 110, 255)
-            sHalo = glow(14, 10, 60); chCore = Color.rgb(238, 249, 255); chNear = Color.rgb(95, 214, 255)
+            sHalo = glow(14, 10, 60)
             model.setFlameGlow(Color.rgb(220, 245, 255), Color.rgb(70, 170, 255), Color.rgb(30, 80, 255))
             fCore = Array(2) { flameSprite(238, 249, 255, 11 + it * 5) }
             smkBlue = Array(2) { puff(70, 120, 200, 0.34f, 21 + it * 4) }
@@ -317,7 +311,6 @@ class DragonView(context: Context) : View(context) {
             sBlue = glow(Color.red(mid), Color.green(mid), Color.blue(mid))
             val edge = FlameColors.at(cols, 100f)
             sHalo = glow(Color.red(edge) * 2 / 5, Color.green(edge) * 2 / 5, Color.blue(edge) * 2 / 5)
-            chCore = core; chNear = near
             model.setFlameGlow(core, near, mid)
             fCore = Array(2) { flameSprite(Color.red(core), Color.green(core), Color.blue(core), 11 + it * 5) }
             val sm = FlameColors.lighten(mid, 0.1f)
@@ -794,7 +787,7 @@ class DragonView(context: Context) : View(context) {
     }
 
     private fun startSleep() {
-        if (!sleepSpot()) { doAction("fly", -1); return }
+        if (!sleepSpot()) { doAction("fly"); return }
         val c = ic(iconIdx)
         var tx = spot[1]
         // sometimes a few extra steps before lying down (only when there is room)
@@ -806,7 +799,7 @@ class DragonView(context: Context) : View(context) {
             if (ok) tx = cand
         }
         sleepSpot()
-        if (abs(tx - st.x) < 2f) { if (!beginSleep()) doAction("fly", -1); return }
+        if (abs(tx - st.x) < 2f) { if (!beginSleep()) doAction("fly"); return }
         walkTo = tx; faceT = if (tx > st.x) 1f else -1f; sleepAfterWalk = true; mode = Mode.WALK
     }
 
@@ -814,24 +807,22 @@ class DragonView(context: Context) : View(context) {
         mode = Mode.SCRATCH; t = 0f; scratchDur = rnd(2.4f, 3.8f); st.scratchPh = 0f
     }
 
-    private fun doAction(kind: String, idx: Int) {
+    private fun doAction(kind: String) {
         when (kind) {
             "sleep" -> startSleep()
             "scratch" -> startScratch()
             "walk" -> { if (!startWalk()) timer = rnd(1f, 2f) }
             "jump" -> {
                 val nb = neighbors(iconIdx)
-                if (nb.isEmpty()) return doAction("fly", -1)
-                flyToIcon(if (idx >= 0) idx else nb.random(), true)
+                if (nb.isEmpty()) return doAction("fly")
+                flyToIcon(nb.random(), true)
             }
-            "fly" -> flyToIcon(if (idx >= 0) idx else randIcon(iconIdx), false)
-            else -> fireAt(if (idx >= 0) idx else randIcon(iconIdx))
+            "fly" -> flyToIcon(randIcon(iconIdx), false)
+            else -> fireAt(randIcon(iconIdx))
         }
     }
 
     private fun chooseNext() {
-        val k = pendKind
-        if (k != null) { pendKind = null; doAction(k, pendIdx); return }
         // each time it is bored it picks a mood at random; moods that do not fit here are left out
         val kinds = ArrayList<String>(); val w = ArrayList<Float>()
         if (ic(iconIdx).big) { kinds.add("walk"); w.add(0.26f) }
@@ -841,7 +832,7 @@ class DragonView(context: Context) : View(context) {
         kinds.add("fly"); w.add(0.13f)
         kinds.add("fire"); w.add(0.22f)
         var r = Random.nextFloat() * w.sum()
-        for (i in kinds.indices) { r -= w[i]; if (r <= 0f || i == kinds.size - 1) { doAction(kinds[i], -1); return } }
+        for (i in kinds.indices) { r -= w[i]; if (r <= 0f || i == kinds.size - 1) { doAction(kinds[i]); return } }
     }
 
     // ---------- effects ----------
@@ -1241,11 +1232,6 @@ class DragonView(context: Context) : View(context) {
             sparkPaint.strokeWidth = width
             sparkPaint.color = (chCol[colorIdx.coerceIn(0, 7)] and 0x00FFFFFF) or (a255(alpha) shl 24)
             (fxCanvas ?: return).drawLines(pts, 0, count, sparkPaint)
-        }
-        override fun ring(x: Float, y: Float, r: Float, colorIdx: Int, width: Float, alpha: Float) {
-            sparkPaint.strokeWidth = width
-            sparkPaint.color = (chCol[colorIdx.coerceIn(0, 7)] and 0x00FFFFFF) or (a255(alpha) shl 24)
-            (fxCanvas ?: return).drawCircle(x, y, r, sparkPaint)
         }
     }
     private val chargeFx = ChargeFx(model, fxPainter)

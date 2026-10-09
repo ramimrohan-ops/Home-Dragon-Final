@@ -41,7 +41,7 @@ interaction, no purchases, no location sharing. Target audience: 13 and over (do
   Android's Accessibility settings with the service switched on, then the dragon sitting on icons
 
 **Permissions in use:** display over other apps, foreground service (special use), notifications, start after reboot,
-accessibility service (disclosed above). Battery exemption is NOT requested; the app only opens the system battery list.
+accessibility service (disclosed above), optional usage access (the user switches it on by hand; only the name of the app in front is used, live, nothing is stored or sent). Battery exemption is NOT requested; the app only opens the system battery list.
 
 ## 4. Before production
 New personal developer accounts may need a closed test with 12 or more testers for 14 days first. Check the

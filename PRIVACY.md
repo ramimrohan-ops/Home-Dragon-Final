@@ -1,6 +1,6 @@
 # Home Dragon privacy policy
 
-Last updated: 8 October 2026
+Last updated: 10 October 2026
 
 Home Dragon is a pet dragon that lives on your Android home screen. This page explains what the app does with your information.
 
@@ -12,6 +12,7 @@ Home Dragon is a pet dragon that lives on your Android home screen. This page ex
 |---|---|---|
 | Accessibility service ("Home Dragon icon finder"), only after you agree in the app | Finds the position and size of your home-screen icons and notices when the home screen is in front, so the dragon can sit on icons and breathe fire at them | Used live in memory only. Not saved, not sent anywhere |
 | Display over other apps | Draws the dragon on top of your home screen | Nothing is collected |
+| Usage access (optional, switched on by you in Android settings) | Tells the dragon which app is in front, so it hides when you open another app. Only the name of the app in front is used | Used live in memory only. Not saved, not sent anywhere |
 | Notification | Shows the required "Dragon is on your home screen" notice while the dragon runs | Nothing is collected |
 | Start after reboot, background running | Brings the dragon back after a restart and keeps it running | Nothing is collected |
 
@@ -33,7 +34,7 @@ Home Dragon is not directed at children and collects no data from anyone.
 
 ## Your choices
 
-You can switch the icon finder off at any time in Android Settings > Accessibility, and remove the dragon by tapping Stop in the app or uninstalling it.
+You can switch the icon finder off at any time in Android Settings > Accessibility, switch usage access off in Android Settings > Apps > Special access > Usage access, and remove the dragon by tapping Stop in the app or uninstalling it.
 
 ## Contact
 

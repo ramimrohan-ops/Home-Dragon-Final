@@ -134,9 +134,6 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
     private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
     private val textFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = Typeface.DEFAULT_BOLD; textAlign = Paint.Align.CENTER }
-    private val textOutline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        typeface = Typeface.DEFAULT_BOLD; textAlign = Paint.Align.CENTER; style = Paint.Style.STROKE; strokeJoin = Paint.Join.ROUND
-    }
     private val clip = Path()
 
     // ---------------------------------------------------------------- control
@@ -473,7 +470,7 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
             FLYING -> drawFps(c, w, h, true)
             SEETHROUGH -> drawSeeThrough(c, w, h)
             CHARGE -> drawChargeScene(c, w, h)
-            else -> drawParticles(c, w, h)
+            else -> drawParticles(c, h)
         }
         c.restore()
         line.color = Color.parseColor("#2C3F6B"); line.strokeWidth = dp(1f)
@@ -733,11 +730,6 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
             arcPaint.color = (gradInts[colorIdx.coerceIn(0, 7)] and 0x00FFFFFF) or ((alpha.coerceIn(0f, 1f) * 255f).toInt() shl 24)
             (fxCanvas ?: return).drawLines(pts, 0, count, arcPaint)
         }
-        override fun ring(x: Float, y: Float, r: Float, colorIdx: Int, width: Float, alpha: Float) {
-            arcPaint.strokeWidth = width
-            arcPaint.color = (gradInts[colorIdx.coerceIn(0, 7)] and 0x00FFFFFF) or ((alpha.coerceIn(0f, 1f) * 255f).toInt() shl 24)
-            (fxCanvas ?: return).drawCircle(x, y, r, arcPaint)
-        }
     }
     private val chargeFx = ChargeFx(model, fxPainter)
 
@@ -753,7 +745,7 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
         fxCanvas = null
     }
 
-    private fun drawParticles(c: Canvas, w: Float, h: Float) {
+    private fun drawParticles(c: Canvas, h: Float) {
         if (!geomReady) return
         c.save(); c.clipRect(rightRect)
         // dummy icon

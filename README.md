@@ -344,3 +344,11 @@ Android blocks accessibility services of apps installed outside an app store. Th
 - **No fade-out:** every time the dragon hides (another app in front, page swipe, screen off) it disappears at once.
 - **Fade-in 0.4 s, smooth:** every time it reappears it fades in over about 0.4 s with a soft start and soft end (it used to be about 0.17 s). Applies to window changes and page swipes alike. The overlay is still capped at 80% opacity on Android 12+.
 - **Icon finder re-checks** after a window change while the dragon is hidden: 2 re-checks at 0.4 s and 0.8 s (they were 0.3, 0.9 and 2 s).
+
+## v4.2 - usage access, new Setup card, dead code removed
+- **Usage access (optional).** A new row in the Setup card opens Android's Usage access page; once switched on, Android itself tells the dragon which app is in front (only the app name, used live). It names an app even when its window cannot be read (banking or secure apps), and it is cheap: no screen scan is needed to hide the dragon. If the permission is off, everything works as in v4.1. It does not count towards "setup finished".
+  - Hidden-dragon polling and the re-checks after a window change use it first: another app in front -> hidden at once. If the focused window is plainly the launcher, the window is believed (Android's list can lag a moment).
+  - An unreadable window is re-checked once more 0.4 s and 0.8 s later, so an app that opens from the home screen is caught even if Android's list was one step behind.
+- **New Setup card:** four rows, each with an icon tile, one short title and a button (Turn on / On); no description lines; a small "?" opens the info page, which is shortened too. The Log tab shows a "Usage access: on/off" line.
+- **Dead code removed:** unused fields, helper functions, parameters, an unused painter method, imports and API checks made unnecessary by minSdk 29 (details in the commit). No behaviour changes.
+- Privacy policy and Play notes mention usage access.

@@ -29,7 +29,7 @@ import java.io.File
 
 /**
  * Simple dark home screen for the app: a big start/stop button, five sliders (quality, particles, size and charge-up have preview boxes)
- * (quality, dragon size, dragon speed) that change the dragon live, a flame colour picker, and three setup rows.
+ * (quality, dragon size, dragon speed) that change the dragon live, a flame colour picker, and four setup rows.
  */
 class MainActivity : Activity() {
 
@@ -192,27 +192,47 @@ class MainActivity : Activity() {
 
     // ---------------------------------------------------------------- setup row
 
-    private inner class SetupRow(title: String, desc: String, private val onClick: () -> Unit) {
-        val state = text("", 13f, MUTED, true)
+    private inner class SetupRow(emoji: String, tint: String, title: String, private val onClick: () -> Unit) {
+        private val pillView = text("", 12f, Color.WHITE, true).apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(14), dp(6), dp(14), dp(6))
+        }
         val view = LinearLayout(this@MainActivity).apply {
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(7), 0, dp(7))
+            setPadding(0, dp(9), 0, dp(9))
             isClickable = true
             setOnClickListener { stopHighlight(); onClick() }
         }
 
         init {
-            val col = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL }
-            col.addView(text(title, 14f, FG, true))
-            col.addView(text(desc, 11f, MUTED))
-            view.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            view.addView(state)
+            view.addView(TextView(this@MainActivity).apply {
+                text = emoji
+                textSize = 16f
+                gravity = Gravity.CENTER
+                background = shape(Color.parseColor(tint), 12)
+            }, LinearLayout.LayoutParams(dp(36), dp(36)))
+            view.addView(text(title, 14.5f, FG, true).apply { setPadding(dp(12), 0, dp(8), 0) },
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            view.addView(pillView)
         }
 
         fun update(ok: Boolean) {
-            state.text = if (ok) "●  On" else "Set up  ›"
-            state.setTextColor(if (ok) GREEN else ORANGE)
+            if (ok) {
+                pillView.text = "\u25CF  On"
+                pillView.setTextColor(GREEN)
+                pillView.background = shape(Color.parseColor("#12332A"), 16, GREEN)
+            } else {
+                pillView.text = "Turn on"
+                pillView.setTextColor(Color.WHITE)
+                pillView.background = gradient(TEAL, BLUE, 16)
+            }
         }
+    }
+
+    /** A thin line between two setup rows, starting after the icon tile. */
+    private fun rowDivider() = View(this).apply {
+        setBackgroundColor(STROKE)
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1).apply { leftMargin = dp(48) }
     }
 
     // ---------------------------------------------------------------- screen
@@ -432,25 +452,31 @@ class MainActivity : Activity() {
         flame.addView(divider()); flame.addView(seeRow)
         col.addView(flame)
 
-        // setup rows
+        // setup rows: icon tile, title and one button each; Usage access is optional and does not count towards "setup finished"
         val setup = card()
         setupCard = setup
         val setupHead = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
         setupHead.addView(text("Setup", 12f, MUTED, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        setupHead.addView(text("What does it ask for?", 12f, TEAL, true).apply {
-            setPadding(dp(8), dp(4), 0, dp(4))
+        setupHead.addView(text("?", 12f, TEAL, true).apply {
+            gravity = Gravity.CENTER
+            background = shape(Color.TRANSPARENT, 12, TEAL)
             isClickable = true
             setOnClickListener { stopHighlight(); showWelcome() }
-        })
+        }, LinearLayout.LayoutParams(dp(24), dp(24)))
         setup.addView(setupHead)
-        val r1 = SetupRow("Draw over other apps", "Lets the dragon appear on your home screen") {
+        setup.addView(View(this), LinearLayout.LayoutParams(1, dp(4)))
+        val r1 = SetupRow("\uD83E\uDE9F", "#1B3A5F", "Draw over apps") {
             startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
         }
-        val r2 = SetupRow("Icon finder", "Lets the dragon see where your icons are") { onIconFinderTapped() }
-        val r3 = SetupRow("Background running", "Keeps the dragon alive when the screen is off") { openBackgroundSettings() }
-        setupRows.addAll(listOf(r1, r2, r3))
-        setup.addView(r1.view); setup.addView(r2.view); setup.addView(r3.view)
-        setupHint = text("\uD83D\uDC47  Start here: tap each row to turn it on", 13f, ORANGE, true).apply {
+        val r2 = SetupRow("\uD83D\uDD0D", "#3A2D5F", "Icon finder") { onIconFinderTapped() }
+        val r3 = SetupRow("\uD83D\uDD0B", "#1E4A3A", "Background") { openBackgroundSettings() }
+        val r4 = SetupRow("\uD83D\uDCCA", "#5A3F1B", "Usage access") { openUsageAccess() }
+        setupRows.addAll(listOf(r1, r2, r3, r4))
+        setup.addView(r1.view); setup.addView(rowDivider())
+        setup.addView(r2.view); setup.addView(rowDivider())
+        setup.addView(r3.view); setup.addView(rowDivider())
+        setup.addView(r4.view)
+        setupHint = text("\uD83D\uDC47  Tap a row to turn it on", 13f, ORANGE, true).apply {
             visibility = View.GONE
             setPadding(dp(4), dp(12), 0, 0)
         }
@@ -618,7 +644,7 @@ class MainActivity : Activity() {
         }, LinearLayout.LayoutParams(dp(54), dp(54)))
         val titles = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), 0, 0, 0) }
         titles.addView(text("Before you start", 22f, FG, true))
-        titles.addView(text("Home Dragon needs a few things from your phone. Here is what, and why.", 12.5f, MUTED))
+        titles.addView(text("What it needs, and why.", 12.5f, MUTED))
         head.addView(titles, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         body.addView(head)
 
@@ -640,12 +666,13 @@ class MainActivity : Activity() {
             card.addView(t, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             body.addView(card, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10) })
         }
-        item("\uD83E\uDE9F", "#1B3A5F", "Draw over other apps", "A pop-up window permission. It lets the dragon appear on top of your home screen.")
-        item("\uD83D\uDD0D", "#3A2D5F", "Icon finder (Accessibility)", "Finds where your icons are. Android may call it a restricted setting; the app shows you the steps. It reads positions only, never your text.")
-        item("\uD83D\uDD0B", "#1E4A3A", "Background running", "Keeps the dragon alive when the screen is off. You will be asked to let it run without battery limits.")
-        item("\uD83D\uDD14", "#5A3F1B", "Notification", "Android requires a small notification while the dragon is running.")
-        item("\uD83D\uDD04", "#4A2A3A", "One restart", "At the end, restarting once helps the phone pick up the settings.")
-        body.addView(text("\uD83D\uDD12  No internet access. No data collected. Nothing leaves your phone.", 12f, TEAL, true).apply {
+        item("\uD83E\uDE9F", "#1B3A5F", "Draw over apps", "Shows the dragon on your home screen.")
+        item("\uD83D\uDD0D", "#3A2D5F", "Icon finder", "Finds your icons. Reads positions only, never text.")
+        item("\uD83D\uDD0B", "#1E4A3A", "Background", "Keeps the dragon running with the screen off.")
+        item("\uD83D\uDCCA", "#5A3F1B", "Usage access", "Optional. Knows which app is in front.")
+        item("\uD83D\uDD14", "#5A3F1B", "Notification", "A small one, while the dragon runs.")
+        item("\uD83D\uDD04", "#4A2A3A", "One restart", "Once, at the end.")
+        body.addView(text("\uD83D\uDD12  No internet. Nothing leaves your phone.", 12f, TEAL, true).apply {
             gravity = Gravity.CENTER
             setPadding(0, dp(16), 0, dp(4))
         })
@@ -761,12 +788,12 @@ class MainActivity : Activity() {
             if (!Prefs.a11yConsent(this)) showA11yDisclosure()
         }
         try {
-            if (setupRows.size == 3) refresh()
+            if (setupRows.size == 4) refresh()
         } catch (t: Throwable) {
             showError("The status refresh failed:", Log.getStackTraceString(t))
         }
         // setup not finished yet: point at the Setup card again (short pulse, no scrolling)
-        if (!setupDone && Prefs.welcomeSeen(this) && welcome == null && a11yHelp == null && !logTab && setupRows.size == 3) highlightSetup(false)
+        if (!setupDone && Prefs.welcomeSeen(this) && welcome == null && a11yHelp == null && !logTab && setupRows.size == 4) highlightSetup(false)
     }
 
     override fun onNewIntent(newIntent: Intent) {
@@ -883,6 +910,7 @@ class MainActivity : Activity() {
         if (a11yEnabled()) a11yHelp?.dismiss()      // switched on: the steps are no longer needed
         val battery = pm.isIgnoringBatteryOptimizations(packageName)
         setupRows[2].update(battery)
+        setupRows[3].update(Foreground.granted(this))       // optional: not part of "setup done"
         setupDone = overlay && a11yEnabled() && battery
         if (setupDone) stopHighlight()
         if (setupDone && !Prefs.restartAsked(this)) showRestartAdvice()
@@ -892,6 +920,7 @@ class MainActivity : Activity() {
         val sb = StringBuilder()
         sb.append("Dragon service : ").append(if (running) "running" else "NOT running").append('\n')
         sb.append("Icon finder    : ").append(if (finder) "connected" else if (a11yEnabled()) "switched on, not connected" else "off").append('\n')
+        sb.append("Usage access   : ").append(if (Foreground.granted(this)) "on" else "off").append('\n')
         sb.append("Auto-restarts  : ").append(Diag.restartCount(this)).append('\n')
         val ev = Diag.lines(this)
         sb.append('\n').append(if (ev.isEmpty()) "No events yet." else "Recent events (newest first):")
@@ -916,6 +945,24 @@ class MainActivity : Activity() {
             startForegroundService(Intent(this, DragonService::class.java))
         }
         window.decorView.postDelayed({ refresh() }, 500)
+    }
+
+    /** Usage access: the user switches it on by hand. Opens Home Dragon's own page where Android allows it, else the list. */
+    private fun openUsageAccess() {
+        val attempts = listOf(
+            Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS, Uri.parse("package:$packageName")),
+            Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
+        )
+        for (i in attempts) {
+            try {
+                startActivity(i)
+                Toast.makeText(this, "Tap Home Dragon, then switch it on", Toast.LENGTH_LONG).show()
+                return
+            } catch (_: Throwable) {
+            }
+        }
+        try { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) } catch (_: Throwable) {}
+        Toast.makeText(this, "Settings > Apps > Special access > Usage access > Home Dragon", Toast.LENGTH_LONG).show()
     }
 
     private fun isSamsung() = Build.MANUFACTURER.equals("samsung", ignoreCase = true)

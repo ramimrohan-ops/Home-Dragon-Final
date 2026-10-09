@@ -22,7 +22,6 @@ import kotlin.math.sqrt
 
 private fun lerp(a: Float, b: Float, t: Float) = a + (b - a) * t
 private fun deg(r: Float) = r * 57.29578f
-private fun withAlpha(color: Int, alpha: Float) = (color and 0x00FFFFFF) or ((alpha.coerceIn(0f, 1f) * 255f).toInt() shl 24)
 
 /**
  * Procedural realistic dragon (side view, facing +x, origin on the ground under the feet, y down).
@@ -59,7 +58,6 @@ class DragonModel {
         val hi = Color.parseColor("#F6B06A"); val mid = Color.parseColor("#E0713A")
         val lo = Color.parseColor("#A8402A"); val deep = Color.parseColor("#5A1F1F")
         val line = Color.argb(189, 40, 10, 14)
-        val tealLo = Color.parseColor("#1A5A78")
         val plateHi = Color.parseColor("#F6CF9C"); val plateLo = Color.parseColor("#C9794A")
         val boneHi = Color.parseColor("#F7E2BD"); val boneLo = Color.parseColor("#B9703A")
         val eye = Color.parseColor("#FF7A2A")
@@ -113,7 +111,7 @@ class DragonModel {
     private val tswX = floatArrayOf(4f, 3f, 1.8f, 0.6f); private val tswY = floatArrayOf(8f, 6f, 3.5f, 1.2f)
     // each body part follows its own slice of the 0..1 rest timeline (tail and rear first, neck and head last, eye shuts at the end)
     private var rwB = 0f; private var rwW = 0f; private var rwL = 0f; private var rwH = 0f; private var rwK = 0f
-    private var att0X = 0f; private var att0Y = 0f; private var sh0X = 0f; private var sh0Y = 0f; private var p8X = 0f; private var p8Y = 0f
+    private var att0X = 0f; private var att0Y = 0f
     private var napShut = 0f
     private fun restWeights(r: Float) {
         rwB = smooth01(r / 0.7f); rwW = smooth01((r - 0.05f) / 0.6f); rwL = smooth01((r - 0.1f) / 0.7f)
@@ -171,9 +169,7 @@ class DragonModel {
     private val oval = RectF()
     private val knee = FloatArray(2)
     private val tipX = FloatArray(4); private val tipY = FloatArray(4)
-    private val midX = FloatArray(3); private val midY = FloatArray(3)
     private val scalePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
-    private val bladeTip = FloatArray(2)
 
     init {
         // Scale texture drawn at 4x and shown small through the shader matrix.
@@ -225,7 +221,6 @@ class DragonModel {
             var py = lerp(gy, fl[i][1], sp) + s.bob + cr * 12f * (1f - sp) * (if (i <= tailN) i / tailN.toFloat() else 1f)
             var pr = lerp(gr[i][2], wk[i][2], w)
             if (i == 6) { att0X = px + 4f; att0Y = py + 1f }
-            if (i == shI) { sh0X = px - 4f; sh0Y = py - pr * 0.78f; p8X = px; p8Y = py }
             if (rs > 0f) {
                 val wi = if (i <= 7) rwB else rwH
                 px += napDx[i] * wi; py += napDy[i] * wi
@@ -350,7 +345,7 @@ class DragonModel {
     }
 
     /** Scaled muscle mass (thigh, shoulder). */
-    private fun mass(c: Canvas, cx: Float, cy: Float, rx: Float, ry: Float, rot: Float, c1: Int, c2: Int) {
+    private fun mass(c: Canvas, cx: Float, cy: Float, rx: Float, ry: Float, rot: Float, c2: Int) {
         c.save(); c.rotate(deg(rot), cx, cy)
         oval.set(cx - rx, cy - ry, cx + rx, cy + ry)
         fill.shader = null; fill.color = c2
@@ -521,14 +516,14 @@ class DragonModel {
     }
 
     // ---------- head ----------
-    private fun horn(c: Canvas, bx: Float, by: Float, cx: Float, cy: Float, tx: Float, ty: Float, w: Float, far: Boolean) {
+    private fun horn(c: Canvas, bx: Float, by: Float, cx: Float, cy: Float, tx: Float, ty: Float, w: Float) {
         path.reset()
         path.moveTo(bx - w * 0.2f, by + w)
         path.quadTo(cx, cy + w * 0.5f, tx, ty)
         path.quadTo(cx + w * 0.3f, cy - w * 0.9f, bx + w * 0.9f, by - w * 0.3f)
         path.close()
-        if (far) { if (hornFar == null) hornFar = lin(bx, by, tx, ty, 0f to Color.parseColor("#C27A45"), 1f to Color.parseColor("#6D3A22")); fill.shader = hornFar }
-        else { if (hornNear == null) hornNear = lin(bx, by, tx, ty, 0f to Color.parseColor("#F3C58A"), 1f to Color.parseColor("#A95A2D")); fill.shader = hornNear }
+        if (hornFar == null) hornFar = lin(bx, by, tx, ty, 0f to Color.parseColor("#C27A45"), 1f to Color.parseColor("#6D3A22"))
+        fill.shader = hornFar
         c.drawPath(path, fill); fill.shader = null
         stroke.color = Color.argb(153, 46, 16, 10); stroke.strokeWidth = 0.9f; c.drawPath(path, stroke)
     }
@@ -545,7 +540,6 @@ class DragonModel {
         path.close()
         fill.shader = null; fill.color = c1
         c.drawPath(path, fill)
-        bladeTip[0] = tx; bladeTip[1] = ty
     }
 
     private val frill = arrayOf(
@@ -559,7 +553,6 @@ class DragonModel {
     private var jawSh: Shader? = null
     private var eyeSh: Shader? = null
     private var hornFar: Shader? = null
-    private var hornNear: Shader? = null
 
     private fun drawHead(c: Canvas, s: State, px: Float = hx, py: Float = hy, ang: Float = hang, flip: Float = 1f, scl: Float = 1f, shut: Float = napShut) {
         val mouth = s.mouth; val t = s.time
@@ -571,7 +564,7 @@ class DragonModel {
         blade(c, 2f, -12f, -2.35f + fw, 40f, 3f, 0.2f, cCrest[0])
         blade(c, -2f, -10f, -3.0f + fw, 38f, 3f, 0.14f, cCrest[2])
 
-        horn(c, 6f, -12f, -8f, -34f, -46f, -36f, 4.2f, true)
+        horn(c, 6f, -12f, -8f, -34f, -46f, -36f, 4.2f)
 
         // neck frill fan: webbing then spines
         val bx0 = -5f; val by0 = -1f
@@ -681,8 +674,6 @@ class DragonModel {
     }
 
     // ---------- wings ----------
-    private val edgeX = FloatArray(8); private val edgeY = FloatArray(8)
-
     private val wgNear = FloatArray(14); private val wgFar = FloatArray(14)
     private var wgNearOk = false; private var wgFarOk = false
 
@@ -718,7 +709,6 @@ class DragonModel {
         for (k in 0 until 3) {
             val mx = (tipX[k] + tipX[k + 1]) / 2; val my = (tipY[k] + tipY[k + 1]) / 2
             val cx = mx + (wx - mx) * 0.3f; val cy = my + (wy - my) * 0.3f
-            midX[k] = cx; midY[k] = cy
             path.quadTo(cx, cy, tipX[k + 1], tipY[k + 1])
         }
         val mx2 = (tipX[3] + attx) / 2; val my2 = (tipY[3] + atty) / 2
@@ -919,10 +909,10 @@ class DragonModel {
 
         // near legs with thigh and shoulder mass (the haunch slides back while lying down)
         mass(c, lerp(hips[4] + lerp(lerp(3f, 0f, wkv), -1f, sp), -92f, wl), lerp(hips[5] + lerp(lerp(4f, 2f, wkv), 3f, sp), -24f, wl),
-            lerp(lerp(lerp(21f, 16f, wkv), 11f, sp), 25f, wl), lerp(lerp(lerp(20f, 16f, wkv), 13f, sp), 22f, wl), lerp(0.15f, 0f, wl), Col.hi, Col.lo)
+            lerp(lerp(lerp(21f, 16f, wkv), 11f, sp), 25f, wl), lerp(lerp(lerp(20f, 16f, wkv), 13f, sp), 22f, wl), lerp(0.15f, 0f, wl), Col.lo)
         leg(c, s, 2, false, false)
         val shm = max(sp, wkv)
-        if (shm > 0.05f) mass(c, hips[0] - 1f, hips[1] + 1f, 8f * shm, 11f * shm, -0.2f, Col.hi, Col.lo)
+        if (shm > 0.05f) mass(c, hips[0] - 1f, hips[1] + 1f, 8f * shm, 11f * shm, -0.2f, Col.lo)
         val scratching = s.scratch > 0.02f && withHead
         if (!scratching) leg(c, s, 0, true, false)
 
