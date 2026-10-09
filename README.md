@@ -293,3 +293,6 @@ Android blocks accessibility services of apps installed outside an app store. Th
 - **Orb shrinks during the breath:** it stays through the whole breath, gets steadily smaller, is smallest when the breath ends, then fades with the sparks.
 - **Imploding particles replace the rings:** bright glowing particles start on a wide circle around the throat, curve inward in a spiral, speed up, leave a short trail, shrink and merge into the orb. Coloured from the cool to the hot end of your flame gradient, with a faint dark halo so they show on bright wallpapers. Count follows the Particles slider (about 15 to 30). Same in the charge-up preview.
 - **Mouth fully open for the whole charge-up** (opens in about a quarter of a second), stays open through the breath and closes at the end. Home screen and preview. With Charge-up time Off nothing changes.
+
+## v2.10 - mouth closes a little for the breath
+- With Charge-up time on, the mouth is fully open during the charge-up, then closes smoothly to about 40% open (in about 0.2 s) when the breath starts, stays there for the whole breath, and closes completely at the end. Home screen and charge-up preview. The flame glow at the mouth keeps its size. With Charge-up time Off nothing changes.

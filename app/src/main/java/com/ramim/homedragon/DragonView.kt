@@ -1008,7 +1008,7 @@ class DragonView(context: Context) : View(context) {
                 val ft = t - chargeT
                 fireFt = ft
                 st.mouth = if (ft < 0f) smooth(0f, min(0.25f, chargeT), t)
-                    else if (chargeT > 0.05f) clampF((fireDur - ft) / 0.25f, 0f, 1f)
+                    else if (chargeT > 0.05f) min(clampF((fireDur - ft) / 0.25f, 0f, 1f), 1f - 0.6f * smooth(0f, 0.2f, ft))   // closes to 40% for the breath
                     else clampF(min(0.5f + ft / 0.5f, (fireDur - ft) / 0.25f), 0f, 1f)
                 model.headLocal(st.sp, st.walk, hl); val hx = hl[0]; val hy = hl[1]
                 val ang = atan2(c.cy - (st.y + (hy + st.bob) * ds), max(8f, abs(c.cx - (st.x + st.face * hx * ds))))
@@ -1303,9 +1303,10 @@ class DragonView(context: Context) : View(context) {
         if (mode == Mode.FIRE && fireFt >= 0f && st.mouth > 0.05f) {
             model.mouthPos(st, mp)
             val fl = 0.85f + 0.15f * sin(time * 40f)
-            val s = size * 1.1f * st.mouth * fl
-            plusPaint.alpha = (0.7f * st.mouth * 255f).toInt(); sprite(c, sCyan, mp[0], mp[1], s, plusPaint)
-            plusPaint.alpha = (0.9f * st.mouth * 255f).toInt(); sprite(c, sCore, mp[0], mp[1], s * 0.4f, plusPaint)
+            val mf = min(1f, st.mouth * 2.2f)                 // the flame glow keeps its size while the mouth is only 40% open
+            val s = size * 1.1f * mf * fl
+            plusPaint.alpha = (0.7f * mf * 255f).toInt(); sprite(c, sCyan, mp[0], mp[1], s, plusPaint)
+            plusPaint.alpha = (0.9f * mf * 255f).toInt(); sprite(c, sCore, mp[0], mp[1], s * 0.4f, plusPaint)
         }
     }
 }

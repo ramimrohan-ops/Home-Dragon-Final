@@ -343,8 +343,8 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
         cyc += dt
         while (cyc >= CYCLE + off) { cyc -= CYCLE + off; if (loopsLeft > 0) loopsLeft--; if (stopReq) wrapStop = true }
         val firing = cyc in (0.45f + off)..(2.1f + off)
-        // the mouth is fully open from the start of the charge-up to the end of the breath
-        val mouthGoal = if (cyc in 0.3f..(2.25f + off)) 1f else 0f
+        // fully open from the start of the charge-up, 40% open during the breath, closed at its end
+        val mouthGoal = if (cyc in 0.3f..(2.25f + off)) (if (off > 0.05f && cyc >= 0.3f + off) 0.4f else 1f) else 0f
         mouth += (mouthGoal - mouth) * min(1f, dt * 12f)
         heat = if (firing && cyc > 0.7f + off) min(1f, heat + dt * 2.2f) else max(0f, heat - dt * 0.8f)
 
@@ -634,9 +634,10 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
             val sz = fsz[i] * (0.6f + a * 0.9f)
             sprite(c, (a * 5.99f).toInt(), fx[i], fy[i], sz, (1f - a).pow(0.7f))
         }
-        if (mouth > 0.6f) {
-            sprite(c, 1, mx, my, dp(13f) * mouth, 0.8f * mouth)
-            sprite(c, 0, mx, my, dp(6f) * mouth, 0.9f * mouth)
+        if (mouth > 0.3f) {
+            val mf = min(1f, mouth * 2.2f)
+            sprite(c, 1, mx, my, dp(13f) * mf, 0.8f * mf)
+            sprite(c, 0, mx, my, dp(6f) * mf, 0.9f * mf)
         }
         textFill.textSize = dp(10.5f); textFill.color = Color.parseColor("#B8C6E4")
         textFill.textAlign = Paint.Align.CENTER
