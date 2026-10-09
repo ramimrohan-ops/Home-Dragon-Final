@@ -265,3 +265,8 @@ Android blocks accessibility services of apps installed outside an app store. Th
 - **Colours follow the flame colours** chosen in the app (the throat glow inside the open mouth too). Default is the original blue.
 - **Visible on any wallpaper:** a dark soft halo sits behind each glow. The glow does not fade with the Transparency slider. The number of converging sparks follows the Particles slider.
 - **New slider "Charge-up time"** (main Dragon tab): Off, then 0.5 to 3.0 s in 0.5 s steps, default 1.5 s (was a fixed, faint 2 s). Applies live and is included in "Reset all". The preview box shows the mouth part (orb, sparks, flash); the spine wave is only seen on the real dragon. The time is in real seconds and does not depend on Dragon speed. Longer time = slightly bigger, brighter finish. Costs a little extra battery during the charge only.
+
+## v2.6 - preview boxes
+- **Charge-up time preview:** shows the whole sitting dragon (not just the head) with the real effect: glow wave along the spine, orb, sparks, rings, flash, then the breath into empty space (no dummy icon). It stays still while the slider is dragged and plays on a loop after you let go, until you touch the slider again. It pauses when you leave the Dragon tab or the app.
+- **Flame colours preview:** stays still when the tab opens. Changing a colour plays two loops of fire in the new colours, then it pauses on a still picture.
+- **Transparency preview and hints:** since Android 12 the system makes the dragon's "draw over other apps" window (the kind that lets taps through) 20% see-through, so the most solid the dragon can be on the home screen is about 80%. The preview now shows the same cap on Android 12+, and the slider hints say so. Nothing changes on Android 10 and 11.

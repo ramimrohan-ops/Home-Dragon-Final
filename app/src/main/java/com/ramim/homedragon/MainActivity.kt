@@ -180,7 +180,7 @@ class MainActivity : Activity() {
 
         fun reset() { seek.progress = (def - min) / step; save(def); live() }
 
-        fun release() { previews.forEach { it.stop() } }
+        fun release() { previews.forEach { it.halt() } }
     }
 
     // ---------------------------------------------------------------- setup row
@@ -330,7 +330,7 @@ class MainActivity : Activity() {
         val charge = Slider(
             "Charge-up time", "Glow that builds before every fire breath, in your flame colours. Off = no charge-up.",
             0, 30, Prefs.chargeTenths(this), { Prefs.setChargeTenths(this, it) }, { DragonService.instance?.view?.reloadSettings() },
-            step = 5, previews = listOf(PreviewView(this, PreviewView.CHARGE)), previewDp = 150, def = 15,
+            step = 5, previews = listOf(PreviewView(this, PreviewView.CHARGE)), previewDp = 170, def = 15,
             fmt = { if (it == 0) "Off" else String.format("%.1f s", it / 10f) }
         )
         sliders.addAll(listOf(quality, particles, size, speed, charge))
@@ -355,6 +355,7 @@ class MainActivity : Activity() {
         val picker = FlamePicker(this) { cols, done ->
             Prefs.setFlameColors(this, cols)
             fPrev.reloadFlame()
+            fPrev.playLoops(2)                       // plays two loops of fire in the new colours, then pauses
             if (done) DragonService.instance?.view?.reloadFlame()
         }
         val fReset = text("Reset to blue", 12f, ORANGE, true).apply {
@@ -373,12 +374,12 @@ class MainActivity : Activity() {
             Unit
         }
         val transp = Slider(
-            "Transparency", "Body, bones and claws. 0% solid, 100% barely visible.",
+            "Transparency", "Body, bones and claws. 0% = most solid" + (if (Build.VERSION.SDK_INT >= 31) " (Android 12+ keeps it about 80% solid)" else "") + ", 100% barely visible.",
             0, 100, Prefs.transparencyPct(this), { Prefs.setTransparencyPct(this, it) }, seeLive,
             step = 10, previews = listOf(seePrev), def = 50, showPreviews = false
         )
         val wingTransp = Slider(
-            "Wing transparency", "Only the thin wing skin. 0% solid.",
+            "Wing transparency", "Only the thin wing skin. 0% = most solid" + (if (Build.VERSION.SDK_INT >= 31) " (about 80%, Android limit)." else "."),
             0, 100, Prefs.wingTransPct(this), { Prefs.setWingTransPct(this, it) }, seeLive,
             step = 10, previews = listOf(seePrev), def = 65, showPreviews = false
         )
@@ -474,7 +475,7 @@ class MainActivity : Activity() {
             tabLog.setTextColor(if (log) FG else MUTED)
             try {
                 if (!tabsReady) return
-                if (log) { sliders.forEach { it.release() }; flamePreview?.stop(); refresh() } else flamePreview?.start()
+                if (log) { sliders.forEach { it.release() }; flamePreview?.stop(); refresh() } else flamePreview?.showStill()
             } catch (_: Throwable) {
             }
         }
@@ -714,7 +715,7 @@ class MainActivity : Activity() {
         })
         DragonService.appOpen = true
         DragonService.instance?.refreshHold()
-        try { if (!logTab) flamePreview?.start() } catch (_: Throwable) {}
+        try { if (!logTab) flamePreview?.showStill() } catch (_: Throwable) {}
         // the icon finder was switched on in Android's settings before the user agreed here: show the disclosure now
         if (intent?.getBooleanExtra("a11y_disclosure", false) == true) {
             intent.removeExtra("a11y_disclosure")
