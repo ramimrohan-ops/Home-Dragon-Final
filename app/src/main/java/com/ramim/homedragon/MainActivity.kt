@@ -271,11 +271,18 @@ class MainActivity : Activity() {
 
         // header: badge, title and status in one row
         val header = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        val badge = TextView(this).apply {
-            text = "🐉"
-            textSize = 22f
-            gravity = Gravity.CENTER
-            background = gradient(TEAL, BLUE, 14)
+        // the real app logo (the dragon head of the launcher icon), cropped to its centre with rounded corners
+        val badge = android.widget.FrameLayout(this).apply {
+            clipToOutline = true
+            outlineProvider = object : android.view.ViewOutlineProvider() {
+                override fun getOutline(v: View, o: android.graphics.Outline) { o.setRoundRect(0, 0, v.width, v.height, dp(12).toFloat()) }
+            }
+            val img = android.widget.ImageView(this@MainActivity).apply {
+                setImageResource(R.drawable.ic_launcher_fg)
+                scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+                scaleX = 1.45f; scaleY = 1.45f
+            }
+            addView(img, android.widget.FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         }
         header.addView(badge, LinearLayout.LayoutParams(dp(44), dp(44)))
         val titles = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, 0, 0) }
@@ -373,13 +380,14 @@ class MainActivity : Activity() {
             DragonService.instance?.view?.reloadSettings()
             Unit
         }
+        val transpHint = if (Build.VERSION.SDK_INT >= 31) "0% = most solid (max 80% on Android 12+)." else "0% = solid, 100% = barely visible."
         val transp = Slider(
-            "Transparency", "Body, bones and claws. 0% = most solid" + (if (Build.VERSION.SDK_INT >= 31) " (Android 12+ keeps it about 80% solid)" else "") + ", 100% barely visible.",
+            "Transparency", transpHint,
             0, 100, Prefs.transparencyPct(this), { Prefs.setTransparencyPct(this, it) }, seeLive,
             step = 10, previews = listOf(seePrev), def = 50, showPreviews = false
         )
         val wingTransp = Slider(
-            "Wing transparency", "Only the thin wing skin. 0% = most solid" + (if (Build.VERSION.SDK_INT >= 31) " (about 80%, Android limit)." else "."),
+            "Wing transparency", transpHint,
             0, 100, Prefs.wingTransPct(this), { Prefs.setWingTransPct(this, it) }, seeLive,
             step = 10, previews = listOf(seePrev), def = 65, showPreviews = false
         )

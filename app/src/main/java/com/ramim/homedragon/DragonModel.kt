@@ -139,8 +139,8 @@ class DragonModel {
     fun setTransparency(bodyPct: Int, wingPct: Int) {
         val ob = 1f - 0.9f * bodyPct.coerceIn(0, 100) / 100f
         val ow = 1f - 0.9f * wingPct.coerceIn(0, 100) / 100f
-        val a = max(ob, ow)
-        groupAlpha = a; membraneAlpha = ow / a; bodyRel = ob / a
+        // the two sliders are completely separate: the wing skin is drawn at its own alpha, everything else at the body alpha
+        groupAlpha = 1f; membraneAlpha = ow; bodyRel = ob
     }
 
     /** Draws fn into a layer composited with alpha a (same transform). */
@@ -467,8 +467,21 @@ class DragonModel {
                 elx += 2f * napA; ely += 14f * napA
                 wrx += (2f + fo * 8f) * napA; wry += (20f + fo * 1.5f) * napA
             }
+            // idle life while sitting: upper arm and forearm follow the breathing, the paw flexes and every few seconds lifts a little.
+            // Not while lying down, flying, walking or scratching with this arm.
+            val idle = (1f - sp) * (1f - wkv) * (1f - s.rest) * (1f - sk)
+            var idleP = 0f
+            if (idle > 0.001f) {
+                val tt = s.time
+                val br = sin(tt * 2.2f + fo * 0.9f)
+                val cy = (tt * 0.16f + fo * 0.5f) % 1f
+                val lf = if (cy < 0.12f) sin(cy / 0.12f * 3.14159f) else 0f
+                elx += 0.4f * br * idle; ely += (0.9f * br - 1.2f * lf) * idle
+                wrx += (0.5f * sin(tt * 1.1f + fo * 1.7f) - 1.0f * lf) * idle; wry += (1.0f * br - 3.2f * lf) * idle
+                idleP = (0.14f * sin(tt * 3.1f + fo * 1.7f) + 0.4f * lf) * idle
+            }
             var tox = wrx + 3f + 6f * napA; var toy = wry + 3f
-            var pang = lerp(lerp(1.3f, 0.95f, sk), 0.25f, napA); var pbig = lerp(0.9f, 1.5f, napA); val pflat = napA
+            var pang = lerp(lerp(1.3f, 0.95f, sk), 0.25f, napA) + idleP; var pbig = lerp(0.9f, 1.5f, napA); val pflat = napA
             val fcol2 = fc2
             limbN = 2
             limbX[0] = elx; limbY[0] = ely; limbX[1] = wrx; limbY[1] = wry

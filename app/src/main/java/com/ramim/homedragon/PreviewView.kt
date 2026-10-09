@@ -461,10 +461,10 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
             val ds = min(w * 0.62f / FLY_W, (h - dp(60f)) / FLY_H)
             st.ds = ds
             st.x = w / 2f - FLY_CX * ds
-            st.y = (h + dp(34f)) / 2f - FLY_CY * ds
+            st.y = (h + dp(8f)) / 2f - FLY_CY * ds
             model.draw(c, st)
         } else {
-            val base = h - dp(18f)
+            val base = h - dp(26f)
             val ds = min(w * 0.62f / MODEL_W, (base - dp(8f)) / MODEL_H)
             sit(st, t)
             st.ds = ds
@@ -475,11 +475,11 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
             model.draw(c, st)
         }
 
-        // caption, top-left
-        textFill.textAlign = Paint.Align.LEFT
+        // caption, bottom centre
+        textFill.textAlign = Paint.Align.CENTER
         textFill.textSize = dp(10f); textFill.color = Color.parseColor("#B8C6E4")
         textFill.setShadowLayer(dp(4f), 0f, dp(1f), Color.argb(200, 0, 0, 0))
-        c.drawText(if (flying) "FLYING" else "SITTING", dp(10f), dp(18f), textFill)
+        c.drawText(if (flying) "FLYING" else "SITTING", w / 2f, h - dp(7f), textFill)
 
         // frame rate, top-right: big white number on a soft shadow
         val numSize = min(dp(46f), w * 0.24f)
@@ -536,7 +536,7 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
         st.head = model.restHead(1f, 0f)
         st.wingPh = wingPh + 0.6f
         st.bob = 0f
-        val ds = min(w * 0.96f / FLY_W, h * 0.86f / FLY_H)
+        val ds = min(w * 0.96f / FLY_W, h * 0.80f / FLY_H)
         st.ds = ds
         st.x = w / 2f - FLY_CX * ds
         st.y = h / 2f - FLY_CY * ds
@@ -546,10 +546,10 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
         val sv = if (capped) c.saveLayerAlpha(0f, 0f, w, h, (0.8f * 255f).toInt()) else 0
         model.draw(c, st)
         if (capped) c.restoreToCount(sv)
-        textFill.textAlign = Paint.Align.LEFT
+        textFill.textAlign = Paint.Align.CENTER
         textFill.textSize = dp(9.5f); textFill.color = Color.parseColor("#B8C6E4")
         textFill.setShadowLayer(dp(3f), 0f, dp(1f), Color.argb(220, 0, 0, 0))
-        c.drawText("body $bodyT% - wings $wingT%", dp(8f), h - dp(7f), textFill)
+        c.drawText("body $bodyT% - wings $wingT%", w / 2f, h - dp(7f), textFill)
         textFill.setShadowLayer(0f, 0f, 0f, 0)
         textFill.textAlign = Paint.Align.CENTER
     }
@@ -563,7 +563,7 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
     private fun layoutChargeDragon() {
         val w = width.toFloat(); val h = height.toFloat()
         if (w <= 0f || h <= 0f) return
-        val base = h - dp(14f)
+        val base = h - dp(26f)
         val ds = min(w * 0.46f / MODEL_W, (base - dp(8f)) / MODEL_H)
         sit(st, t)
         st.mouth = mouth
@@ -596,9 +596,9 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
             sprite(c, 0, mx, my, dp(6f) * mouth, 0.9f * mouth)
         }
         textFill.textSize = dp(10.5f); textFill.color = Color.parseColor("#B8C6E4")
-        textFill.textAlign = Paint.Align.LEFT
+        textFill.textAlign = Paint.Align.CENTER
         textFill.setShadowLayer(dp(3f), 0f, dp(1f), Color.argb(200, 0, 0, 0))
-        c.drawText(if (chargeS <= 0.05f) "charge-up: off" else "charge-up: " + String.format("%.1f", chargeS) + " s", dp(10f), dp(18f), textFill)
+        c.drawText(if (chargeS <= 0.05f) "charge-up: off" else "charge-up: " + String.format("%.1f", chargeS) + " s", w / 2f, h - dp(8f), textFill)
         textFill.setShadowLayer(0f, 0f, 0f, 0)
         textFill.textAlign = Paint.Align.CENTER
     }
@@ -732,9 +732,9 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
             sprite(c, if (a < 0.4f) 0 else 1, sx[i], sy[i], dp(3.2f), 1f - a)
         }
         textFill.textSize = dp(10.5f); textFill.color = Color.parseColor("#B8C6E4")
-        textFill.textAlign = Paint.Align.LEFT
+        textFill.textAlign = Paint.Align.CENTER
         val capF = min(MAXF, (70 + 130 * pct / 100f).toInt())
-        c.drawText("flames up to $capF", rightRect.left + dp(10f), h - dp(8f), textFill)
+        c.drawText("flames up to $capF", rightRect.centerX(), h - dp(8f), textFill)
         textFill.textAlign = Paint.Align.CENTER
         c.restore()
     }
