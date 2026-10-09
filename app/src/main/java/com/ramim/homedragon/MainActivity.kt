@@ -588,6 +588,24 @@ class MainActivity : Activity() {
             .show()
     }
 
+    /** Shown once, when all three setup rows are On. An app cannot restart a phone itself, so "Restart now" opens the power menu. */
+    private fun showRestartAdvice() {
+        Prefs.setRestartAsked(this, true)
+        Diag.log(this, "Restart advice shown")
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Restart your phone?")
+            .setMessage("Setup is finished. Restarting once lets the phone pick up the new battery and accessibility settings, so the dragon keeps running reliably.\n\n" +
+                "\"Restart now\" opens the power menu: tap Restart there.")
+            .setCancelable(true)
+            .setPositiveButton("Restart now") { _, _ ->
+                Diag.log(this, "Restart advice: restart now")
+                val opened = try { IconRegistry.powerDialog?.invoke() == true } catch (_: Throwable) { false }
+                if (!opened) Toast.makeText(this, "Hold the power button (or side key) and choose Restart.", Toast.LENGTH_LONG).show()
+            }
+            .setNegativeButton("Restart later") { _, _ -> Diag.log(this, "Restart advice: later") }
+            .show()
+    }
+
     private fun a11yEnabled(): Boolean {
         val me = ComponentName(this, IconFinderService::class.java).flattenToString()
         val enabled = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: ""
@@ -599,7 +617,9 @@ class MainActivity : Activity() {
         val pm = getSystemService(POWER_SERVICE) as PowerManager
         setupRows[0].update(overlay)
         setupRows[1].update(a11yEnabled())
-        setupRows[2].update(pm.isIgnoringBatteryOptimizations(packageName))
+        val battery = pm.isIgnoringBatteryOptimizations(packageName)
+        setupRows[2].update(battery)
+        if (overlay && a11yEnabled() && battery && !Prefs.restartAsked(this)) showRestartAdvice()
 
         val running = DragonService.instance != null
         val finder = IconRegistry.serviceActive

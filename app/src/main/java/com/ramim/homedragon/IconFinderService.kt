@@ -4,6 +4,7 @@ import android.accessibilityservice.AccessibilityService
 import android.content.Intent
 import android.graphics.Rect
 import android.graphics.RectF
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
@@ -41,12 +42,14 @@ class IconFinderService : AccessibilityService() {
         IconRegistry.serviceActive = true
         IconRegistry.recheck = { handler.post { recheckHome() } }
         Diag.log(this, "Icon finder connected")
+        IconRegistry.powerDialog = { if (Build.VERSION.SDK_INT >= 31) performGlobalAction(GLOBAL_ACTION_POWER_DIALOG) else false }
         KeepAlive.ensureDragon(this, "icon finder connected")
         IconRegistry.listener?.invoke()
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
         Diag.log(this, "Icon finder disconnected")
+        IconRegistry.powerDialog = null
         handler.removeCallbacks(rc1); handler.removeCallbacks(rc2); handler.removeCallbacks(rc3)
         IconRegistry.recheck = null
         IconRegistry.serviceActive = false
