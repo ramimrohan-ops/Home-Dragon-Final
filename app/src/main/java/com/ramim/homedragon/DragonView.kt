@@ -918,7 +918,9 @@ class DragonView(context: Context) : View(context) {
         val now = SystemClock.uptimeMillis()
         if (swipeState == 1 && now - swipeLast > 120L) { swipeState = 2; settleAt = now }
         else if (swipeState == 2 && now - settleAt > 450L) { swipeState = 0; fadeGoal = 1f }
-        fade += clampF((if (hiddenByApp) 0f else fadeGoal) - fade, -rdt / 0.09f, rdt / 0.17f)
+        val fadeTarget = if (hiddenByApp) 0f else fadeGoal
+        // No fade-out: the dragon just disappears. Fade-in: 0.4 s, eased in onDraw.
+        fade = if (fadeTarget < fade) fadeTarget else clampF(fade + rdt / 0.4f, 0f, fadeTarget)
         if (hiddenByApp && fade <= 0.01f && !hiddenNotified) { hiddenNotified = true; post { onFullyHidden?.invoke() } }
         if (icons.isEmpty()) return
         time += rdt
@@ -1140,8 +1142,9 @@ class DragonView(context: Context) : View(context) {
     // ---------- drawing ----------
     override fun onDraw(c: Canvas) {
         if (icons.isEmpty() || fade <= 0.01f) return
-        val layer = fade < 0.995f
-        val saved = if (layer) c.saveLayerAlpha(0f, 0f, width.toFloat(), height.toFloat(), (fade * 255f).toInt()) else 0
+        val fe = fade * fade * (3f - 2f * fade)          // smooth start and end of the 0.4 s fade-in
+        val layer = fe < 0.995f
+        val saved = if (layer) c.saveLayerAlpha(0f, 0f, width.toFloat(), height.toFloat(), (fe * 255f).toInt()) else 0
         for (ic in icons) if (ic.burn > 0.01f || ic.heat > 0.02f) drawBurn(c, ic)
         drawSmoke(c)
         model.draw(c, st)

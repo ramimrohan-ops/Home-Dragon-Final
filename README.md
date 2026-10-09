@@ -339,3 +339,8 @@ Android blocks accessibility services of apps installed outside an app store. Th
 - **Removed** the extra re-checks the dragon service scheduled after every unlock or screen-on (0.3, 0.9, 2, 4 and 8 s).
 - **Kept** the unlock detection itself: the unlock broadcast ("Unlocked") and "Unlock found by checking (no unlock broadcast)".
 - **Kept** the v3.4/v3.5 rules (an unreadable window no longer hides the dragon, two icons = home screen) and the icon finder's own normal re-checks after a window change while the dragon is hidden.
+
+## v4.1 - no fade-out, slow smooth fade-in, two re-checks
+- **No fade-out:** every time the dragon hides (another app in front, page swipe, screen off) it disappears at once.
+- **Fade-in 0.4 s, smooth:** every time it reappears it fades in over about 0.4 s with a soft start and soft end (it used to be about 0.17 s). Applies to window changes and page swipes alike. The overlay is still capped at 80% opacity on Android 12+.
+- **Icon finder re-checks** after a window change while the dragon is hidden: 2 re-checks at 0.4 s and 0.8 s (they were 0.3, 0.9 and 2 s).

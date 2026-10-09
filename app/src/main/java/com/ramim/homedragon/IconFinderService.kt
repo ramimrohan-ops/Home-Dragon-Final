@@ -50,7 +50,7 @@ class IconFinderService : AccessibilityService() {
     override fun onUnbind(intent: Intent?): Boolean {
         Diag.log(this, "Icon finder disconnected")
         IconRegistry.powerDialog = null
-        handler.removeCallbacks(rc1); handler.removeCallbacks(rc2); handler.removeCallbacks(rc3); handler.removeCallbacks(graceRun)
+        handler.removeCallbacks(rc1); handler.removeCallbacks(rc2); handler.removeCallbacks(graceRun)
         IconRegistry.recheck = null
         IconRegistry.serviceActive = false
         IconRegistry.icons = emptyList()
@@ -193,12 +193,11 @@ class IconFinderService : AccessibilityService() {
 
     private val rc1 = Runnable { recheckHome() }
     private val rc2 = Runnable { recheckHome() }
-    private val rc3 = Runnable { recheckHome() }
 
-    /** After a window change while the dragon is hidden: look again 0.3, 0.9 and 2 s later, when the transition is over. */
+    /** After a window change while the dragon is hidden: look again 0.4 and 0.8 s later, when the transition is over. */
     private fun scheduleRechecks() {
-        handler.removeCallbacks(rc1); handler.removeCallbacks(rc2); handler.removeCallbacks(rc3)
-        handler.postDelayed(rc1, 300); handler.postDelayed(rc2, 900); handler.postDelayed(rc3, 2000)
+        handler.removeCallbacks(rc1); handler.removeCallbacks(rc2)
+        handler.postDelayed(rc1, 400); handler.postDelayed(rc2, 800)
     }
 
     private fun setHome(h: Boolean) {
