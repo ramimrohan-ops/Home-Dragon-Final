@@ -13,6 +13,7 @@ import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
 import android.hardware.display.DisplayManager
+import android.os.SystemClock
 import android.view.Choreographer
 import android.view.View
 import kotlin.math.cos
@@ -119,6 +120,8 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
         if (FlameColors.same(cols, flameCols)) return
         flameCols = cols
         sprites = Array(6) { makeSprite(ramp(it / 5f)) }
+        gradInts = IntArray(8) { ramp(it / 7f * 0.85f) }
+        if (!running && kind == CHARGE && geomReady) warm()
         if (FlameColors.isDefault(cols)) model.setFlameGlow(Color.rgb(220, 245, 255), Color.rgb(70, 170, 255), Color.rgb(30, 80, 255))
         else model.setFlameGlow(ramp(0f), ramp(0.18f), ramp(0.5f))
         invalidate()
@@ -180,8 +183,21 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
         invalidate()
     }
 
+    private var stopReq = false          // an idle slider asked this preview to stop at the end of its loop
+    private var wrapStop = false
+    private var stopPh = 0f
+    private var stopSgn = 1
+    private var lastTouchMs = 0L
+
+    /** The slider was touched or moved: cancel a pending stop. */
+    fun touch() {
+        lastTouchMs = SystemClock.uptimeMillis()
+        stopReq = false
+    }
+
     /** The slider is being touched. The charge-up preview holds a still picture, every other preview starts moving. */
     fun start() {
+        touch()
         if (kind == CHARGE) { halt(); return }
         beginAnim()
     }
@@ -194,20 +210,36 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
         Choreographer.getInstance().postFrameCallback(callback)
     }
 
-    /** The slider was let go. The charge-up preview now plays on a loop, every other preview stops. */
-    fun stop() {
-        if (kind == CHARGE) {
-            if (!geomReady) return
+    /** The slider was let go. The charge-up preview now plays on a loop from the start; the others just keep looping. */
+    fun onSliderUp() {
+        touch()
+        if (kind == CHARGE && geomReady) {
             nf = 0; ns = 0; acc = 0f; heat = 0f; mouth = 0f; cyc = 0f
             beginAnim()
-            return
         }
-        halt()
     }
+
+    /** The slider has been left alone: stop at the end of the loop that is playing now, on a clean still picture. */
+    fun requestStop() {
+        if (!running || loopsLeft >= 0) return
+        if (SystemClock.uptimeMillis() - lastTouchMs < 4500L) return      // touched again meanwhile (the transparency preview has two sliders)
+        stopReq = true
+        stopPh = (Math.floor((wingPh / 6.2832f).toDouble()).toFloat() + 1f) * 6.2832f
+        stopSgn = if (sin(t * 0.6f) >= 0f) 1 else -1
+    }
+
+    private fun finishStop() {
+        stopReq = false; wrapStop = false
+        halt()
+        if (fireKind) warm()
+    }
+
+    fun stop() = halt()
 
     /** Really stop moving and hold a still picture. */
     fun halt() {
         loopsLeft = -1
+        stopReq = false; wrapStop = false
         if (running) {
             running = false
             Choreographer.getInstance().removeFrameCallback(callback)
@@ -281,6 +313,16 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
         if (fireKind) {
             step(dt)
             if (loopsLeft == 0) { halt(); warm() }       // the requested loops are done: pause on a still picture
+            else if (wrapStop) finishStop()              // idle slider: the fire loop that was playing is finished
+        }
+        if (stopReq) {
+            var done = false
+            when (kind) {
+                FLYING, SEETHROUGH -> if (wingPh >= stopPh) { wingPh = stopPh; done = true }               // the wing flap is finished
+                SIZE, QUALITY -> if ((if (sin(t * 0.6f) >= 0f) 1 else -1) != stopSgn) done = true          // the slow sway is back in the middle
+                else -> {}
+            }
+            if (done) finishStop()
         }
     }
 
@@ -299,7 +341,7 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
         val off = chargeS                           // the breath starts this much later (0 for the Particles preview)
         if (kind == CHARGE) layoutChargeDragon()
         cyc += dt
-        while (cyc >= CYCLE + off) { cyc -= CYCLE + off; if (loopsLeft > 0) loopsLeft-- }
+        while (cyc >= CYCLE + off) { cyc -= CYCLE + off; if (loopsLeft > 0) loopsLeft--; if (stopReq) wrapStop = true }
         val firing = cyc in (0.45f + off)..(2.1f + off)
         val mouthGoal = if (cyc in (0.3f + off)..(2.25f + off)) 1f else if (off > 0.05f && cyc in (0.3f + off * 0.7f)..(0.3f + off)) 0.5f else 0f
         mouth += (mouthGoal - mouth) * min(1f, dt * 12f)
@@ -603,94 +645,36 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
         textFill.textAlign = Paint.Align.CENTER
     }
 
-    /** The same charge-up as on the home screen: spine wave, glowing spikes, orb with sparks and rings in the mouth, flash and ring at release. */
+    // the charge-up effect itself is shared with the dragon on the home screen (ChargeFx)
+    private var fxCanvas: Canvas? = null
+    private var gradInts = IntArray(8) { ramp(it / 7f * 0.85f) }
+    private val arcPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; blendMode = BlendMode.PLUS }
+    private val fxPainter = object : ChargeFx.Painter {
+        override fun glow(i: Int, x: Float, y: Float, half: Float, alpha: Float) { sprite(fxCanvas ?: return, (i * 5 + 3) / 7, x, y, half, alpha) }
+        override fun halo(x: Float, y: Float, half: Float, alpha: Float) {}
+        override fun lines(pts: FloatArray, count: Int, colorIdx: Int, width: Float, alpha: Float) {
+            arcPaint.strokeWidth = width
+            arcPaint.color = (gradInts[colorIdx.coerceIn(0, 7)] and 0x00FFFFFF) or ((alpha.coerceIn(0f, 1f) * 255f).toInt() shl 24)
+            (fxCanvas ?: return).drawLines(pts, 0, count, arcPaint)
+        }
+        override fun ring(x: Float, y: Float, r: Float, colorIdx: Int, width: Float, alpha: Float) {
+            arcPaint.strokeWidth = width
+            arcPaint.color = (gradInts[colorIdx.coerceIn(0, 7)] and 0x00FFFFFF) or ((alpha.coerceIn(0f, 1f) * 255f).toInt() shl 24)
+            (fxCanvas ?: return).drawCircle(x, y, r, arcPaint)
+        }
+    }
+    private val chargeFx = ChargeFx(model, fxPainter)
+
     private fun drawChargeFx(c: Canvas) {
         val off = chargeS
         if (off <= 0.05f || cyc < 0.3f) return
         val ft = cyc - (0.3f + off)                       // time since the breath started (negative while charging)
-        if (ft >= 0.45f) return
         val u = ((cyc - 0.3f) / off).coerceIn(0f, 1f)
-        val amt = if (ft < 0f) sm(0f, 0.1f, u) else 1f - sm(0.1f, 0.45f, ft)
-        if (amt <= 0.01f) return
-        val ds = st.ds
-        val pw = 0.75f + 0.25f * (off / 1.5f).coerceIn(0f, 1.6f)
-        val build = 0.5f + 0.5f * u
-        val fw = (u / 0.7f).coerceIn(0f, 1f) * 0.97f
-        val gt = ((u - 0.6f) / 0.4f).coerceIn(0f, 1f)
-        val rate = 14f + 26f * u
-        val n = model.chargePoints(st, cbx, cby, ctx, cty, cfr)
-        for (k in 0 until n) {
-            val d = fw - cfr[k] + 0.04f
-            val lit = sm(0f, 0.08f, d)
-            val flash = sm(0f, 0.05f, d) * (1f - sm(0.05f, 0.3f, d))
-            val fl = 0.85f + 0.15f * sin(t * rate + k * 0.9f)
-            chB[k] = min(1f, lit * 0.72f * build * fl + flash * 0.95f) * amt
-        }
-        var lastLit = 0f
-        for (k in 0 until n) {
-            val b = chB[k]
-            if (b <= 0.01f) continue
-            if (k == n - 1) lastLit = b
-            val d = fw - cfr[k] + 0.04f
-            val fk = 0.9f + 0.4f * sm(0f, 0.05f, d) * (1f - sm(0.05f, 0.3f, d))
-            sprite(c, 2, cbx[k], cby[k], 17f * ds * fk, b * 0.38f)
-            sprite(c, 2, cbx[k], cby[k], 9f * ds, b * 0.8f)
-            sprite(c, 1, ctx[k], cty[k], 10.5f * ds * (0.7f + 0.3f * b), b * 0.95f)
-            sprite(c, 0, ctx[k], cty[k], 5f * ds * (0.6f + 0.4f * b), b)
-            if (k + 1 < n) {
-                val mb = (b + chB[k + 1]) * 0.5f
-                if (mb > 0.02f) {
-                    val x2 = (cbx[k] + cbx[k + 1]) * 0.5f; val y2 = (cby[k] + cby[k + 1]) * 0.5f
-                    sprite(c, 1, x2, y2, 7f * ds, mb * 0.55f)
-                    sprite(c, 2, x2, y2, 12f * ds, mb * 0.35f)
-                }
-            }
-        }
-        if (fw > 0.01f && fw < 0.95f) {                                   // bright head of the wave
-            var k = 0
-            while (k + 1 < n - 1 && cfr[k + 1] < fw) k++
-            val f = ((fw - cfr[k]) / max(0.01f, cfr[k + 1] - cfr[k])).coerceIn(0f, 1f)
-            val wx = cbx[k] + (cbx[k + 1] - cbx[k]) * f; val wy = cby[k] + (cby[k + 1] - cby[k]) * f
-            sprite(c, 1, wx, wy, 14f * ds, 0.9f * amt)
-            sprite(c, 0, wx, wy, 6f * ds, amt)
-        }
-        model.mouthPoint(st, 28f, 3f, orbP)
-        if (gt > 0f && ft < 0f && n > 1) {
-            val g = sm(0f, 1f, gt)
-            val ou = 0.15f + 0.85f * g
-            val pulse = 0.88f + 0.12f * sin(t * rate)
-            val ox = orbP[0] + sin(t * 61f) * 0.8f * ds * ou; val oy = orbP[1] + cos(t * 53f) * 0.8f * ds * ou
-            for (j in 0 until 4) {                                          // streams from the last spike into the mouth
-                val f = (gt * 1.6f + j * 0.25f) % 1f
-                val px = ctx[n - 1] + (ox - ctx[n - 1]) * f; val py = cty[n - 1] + (oy - cty[n - 1]) * f
-                sprite(c, 0, px, py, 3.2f * ds, (1f - f) * 0.95f * max(lastLit, 0.6f))
-                sprite(c, 1, px, py, 6f * ds, (1f - f) * 0.5f * max(lastLit, 0.6f))
-            }
-            for (j in 0 until 12) {                                         // sparks pulled in from all around
-                val a = j * 2.399963f + t * 0.7f
-                val f = (gt * 2.2f + j * 0.37f) % 1f
-                val r = (46f - 10f * (j % 3)) * ds * (1f - f)
-                sprite(c, 0, ox + cos(a) * r, oy + sin(a) * r, 2.4f * ds + dp(0.8f), (0.3f + 0.7f * f) * g)
-            }
-            line.strokeWidth = max(dp(1f), 1.5f * ds)
-            for (j in 0 until 3) {                                          // rings shrinking into the mouth
-                val f = (gt * 1.8f + j / 3f) % 1f
-                line.color = (ramp(0.18f) and 0x00FFFFFF) or ((sin(f * 3.14159f) * 0.65f * g * 255f).toInt().coerceIn(0, 255) shl 24)
-                c.drawCircle(ox, oy, (40f - 34f * f) * ds * pw, line)
-            }
-            sprite(c, 2, ox, oy, 28f * ds * ou * pw * pulse, 0.55f * g)
-            sprite(c, 1, ox, oy, 17f * ds * ou * pw * pulse, 0.85f * g)
-            sprite(c, 0, ox, oy, 9f * ds * ou * pw, g)
-        }
-        if (ft in 0f..0.4f) {                                               // release: flash and a ring flying outwards
-            val rp = ft / 0.4f; val rl = 1f - rp
-            sprite(c, 0, orbP[0], orbP[1], (10f + 14f * rl) * ds * pw, rl)
-            sprite(c, 1, orbP[0], orbP[1], (18f + 26f * rp) * ds * pw, rl * 0.9f)
-            sprite(c, 2, orbP[0], orbP[1], (30f + 30f * rp) * ds * pw, rl * 0.5f)
-            line.strokeWidth = max(dp(1.2f), 2.4f * ds * rl)
-            line.color = (ramp(0f) and 0x00FFFFFF) or ((rl * 0.85f * 255f).toInt().coerceIn(0, 255) shl 24)
-            c.drawCircle(orbP[0], orbP[1], (8f + 52f * rp) * ds * pw, line)
-        }
+        // electric arcs: full during the breath, then fading to zero in one second
+        val spark = if (ft < 1.8f) 1f else (1f - (ft - 1.8f) / 1f).coerceIn(0f, 1f)
+        fxCanvas = c
+        chargeFx.draw(st, st.ds, t, off, u, ft, ft < 0f, spark, 1f)
+        fxCanvas = null
     }
 
     private fun drawParticles(c: Canvas, w: Float, h: Float) {

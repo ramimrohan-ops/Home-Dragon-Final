@@ -446,14 +446,22 @@ class DragonModel {
             val hx0 = shx0; val hy0 = shy0
             var elx = hx0 - 2f; var ely = hy0 + 18f
             var wrx = hx0 + 20f + fo * 10f; var wry = hy0 + 17f + fo * 3f
+            var scratchAng = 0.95f
             val sk = if (idx == 0) s.scratch * (1f - sp) * (1f - wkv) * (1f - s.rest) else 0f
             if (sk > 0.001f) {
                 // raised to the cheek, rubbing back and forth
                 // claw tips on the cheek (below and behind the eye), short strokes along the cheek towards the jaw hinge
                 val su = sin(s.scratchPh) * 4f
                 val lx0 = 11f - su * 0.34f; val ly0 = 4.5f + su * 0.94f + cos(s.scratchPh * 2f) * 0.5f
-                val tx = hx + cos(hang) * lx0 - sin(hang) * ly0 - 4.6f
-                val ty = hy + sin(hang) * lx0 + cos(hang) * ly0 - 8.8f
+                // the claw tips touch the cheek point (cx, cy); the paw points up and forward from the wrist, so the wrist sits below and behind the claws
+                val cx = hx + cos(hang) * lx0 - sin(hang) * ly0
+                val cy = hy + sin(hang) * lx0 + cos(hang) * ly0
+                scratchAng = -0.9f + 0.12f * sin(s.scratchPh * 2f)
+                var tx = cx - 17f * cos(scratchAng)
+                var ty = cy - 17f * sin(scratchAng)
+                // keep the whole arm connected: the wrist can never be further from the shoulder than the arm is long
+                val reach = hypot(tx - hx0, ty - hy0)
+                if (reach > 49f) { tx = hx0 + (tx - hx0) * 49f / reach; ty = hy0 + (ty - hy0) * 49f / reach }
                 ik(hx0, hy0, tx, ty, 25f, 25f, 1)
                 elx = lerp(elx, knee[0], sk); ely = lerp(ely, knee[1], sk)
                 wrx = lerp(wrx, tx, sk); wry = lerp(wry, ty, sk)
@@ -480,8 +488,9 @@ class DragonModel {
                 wrx += (0.5f * sin(tt * 1.1f + fo * 1.7f) - 1.0f * lf) * idle; wry += (1.0f * br - 3.2f * lf) * idle
                 idleP = (0.14f * sin(tt * 3.1f + fo * 1.7f) + 0.4f * lf) * idle
             }
-            var tox = wrx + 3f + 6f * napA; var toy = wry + 3f
-            var pang = lerp(lerp(1.3f, 0.95f, sk), 0.25f, napA) + idleP; var pbig = lerp(0.9f, 1.5f, napA); val pflat = napA
+            var pang = lerp(lerp(1.3f, scratchAng, sk), 0.25f, napA) + idleP
+            var tox = wrx + lerp(3f, cos(pang) * 3f, sk) + 6f * napA; var toy = wry + lerp(3f, sin(pang) * 3f, sk)
+            var pbig = lerp(0.9f, 1.5f, napA); val pflat = napA
             val fcol2 = fc2
             limbN = 2
             limbX[0] = elx; limbY[0] = ely; limbX[1] = wrx; limbY[1] = wry
@@ -671,6 +680,20 @@ class DragonModel {
     // ---------- wings ----------
     private val edgeX = FloatArray(8); private val edgeY = FloatArray(8)
 
+    private val wgNear = FloatArray(14); private val wgFar = FloatArray(14)
+    private var wgNearOk = false; private var wgFarOk = false
+
+    /**
+     * Where a wing was drawn last, in view coordinates: out = shoulder, elbow, wrist, then the 4 claw tips (x, y pairs, 14 values).
+     * Returns false when that wing has not been drawn yet.
+     */
+    fun wingPoints(s: State, far: Boolean, out: FloatArray): Boolean {
+        if (!(if (far) wgFarOk else wgNearOk)) return false
+        val g = if (far) wgFar else wgNear
+        for (i in 0 until 7) { toView(s, g[2 * i], g[2 * i + 1]); out[2 * i] = tv[0]; out[2 * i + 1] = tv[1] }
+        return true
+    }
+
     /** part: 0 = membrane only, 1 = bones only, 2 = both. */
     private fun wing(c: Canvas, shx: Float, shy: Float, a1: Float, a2: Float, dB: Float, fan: Float, sc: Float, far: Boolean, part: Int) {
         val doMem = part != 1; val doBone = part != 0
@@ -681,6 +704,11 @@ class DragonModel {
         val offs = floatArrayOf(fan, fan / 3f, -fan / 3f, -fan)
         for (k in 0 until 4) { val a = dB + offs[k]; tipX[k] = wx + fingers[k] * cos(a); tipY[k] = wy + fingers[k] * sin(a) }
         val attx = attX; val atty = attY
+        // remember where this wing is (shoulder, elbow, wrist, 4 claw tips) for the fire charge-up
+        val wg = if (far) wgFar else wgNear
+        wg[0] = shx; wg[1] = shy; wg[2] = ex; wg[3] = ey; wg[4] = wx; wg[5] = wy
+        for (k in 0 until 4) { wg[6 + 2 * k] = tipX[k]; wg[7 + 2 * k] = tipY[k] }
+        if (far) wgFarOk = true else wgNearOk = true
 
         path.reset()
         path.moveTo(shx, shy); path.lineTo(ex, ey); path.lineTo(wx, wy); path.lineTo(tipX[0], tipY[0])

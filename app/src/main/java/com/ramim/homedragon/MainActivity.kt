@@ -53,6 +53,7 @@ class MainActivity : Activity() {
     private val setupRows = ArrayList<SetupRow>()
     private val sliders = ArrayList<Slider>()
     private var flamePreview: PreviewView? = null
+    private var chargePreview: PreviewView? = null
     private var logTab = false
     private lateinit var scrollView: ScrollView
     private lateinit var pageMainView: LinearLayout
@@ -109,6 +110,7 @@ class MainActivity : Activity() {
         val value = text(fmt(start), 15f, TEAL, true)
         val seek = SeekBar(this@MainActivity)
         val view = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL }
+        private val idleStop = Runnable { previews.forEach { it.requestStop() } }
 
         init {
             val head = LinearLayout(this@MainActivity).apply { gravity = Gravity.CENTER_VERTICAL }
@@ -163,15 +165,19 @@ class MainActivity : Activity() {
                     val v = p * step + min
                     value.text = fmt(v)
                     previews.forEach { it.setValue(v) }
-                    if (fromUser) { save(v); live() }
+                    if (fromUser) { previews.forEach { it.touch() }; save(v); live() }
                 }
                 override fun onStartTrackingTouch(s: SeekBar) {
                     s.parent?.requestDisallowInterceptTouchEvent(true)
+                    view.removeCallbacks(idleStop)
                     previews.forEach { it.start() }               // only the preview boxes move
                 }
                 override fun onStopTrackingTouch(s: SeekBar) {
-                    previews.forEach { it.stop() }
+                    previews.forEach { it.onSliderUp() }
                     live()
+                    // left alone for about 5 seconds: the previews finish the loop they are playing and stop
+                    view.removeCallbacks(idleStop)
+                    view.postDelayed(idleStop, 5000L)
                 }
             })
             view.addView(seek, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
@@ -180,7 +186,7 @@ class MainActivity : Activity() {
 
         fun reset() { seek.progress = (def - min) / step; save(def); live() }
 
-        fun release() { previews.forEach { it.halt() } }
+        fun release() { view.removeCallbacks(idleStop); previews.forEach { it.halt() } }
     }
 
     // ---------------------------------------------------------------- setup row
@@ -334,10 +340,12 @@ class MainActivity : Activity() {
             50, 150, Prefs.speedPct(this), { Prefs.setSpeedPct(this, it) }, { DragonService.instance?.view?.reloadSettings() },
             step = 10
         )
+        val chargePrev = PreviewView(this, PreviewView.CHARGE)
+        chargePreview = chargePrev
         val charge = Slider(
             "Charge-up time", "Glow that builds before every fire breath, in your flame colours. Off = no charge-up.",
             0, 30, Prefs.chargeTenths(this), { Prefs.setChargeTenths(this, it) }, { DragonService.instance?.view?.reloadSettings() },
-            step = 5, previews = listOf(PreviewView(this, PreviewView.CHARGE)), previewDp = 170, def = 15,
+            step = 5, previews = listOf(chargePrev), previewDp = 170, def = 15,
             fmt = { if (it == 0) "Off" else String.format("%.1f s", it / 10f) }
         )
         sliders.addAll(listOf(quality, particles, size, speed, charge))
@@ -362,6 +370,7 @@ class MainActivity : Activity() {
         val picker = FlamePicker(this) { cols, done ->
             Prefs.setFlameColors(this, cols)
             fPrev.reloadFlame()
+            chargePreview?.reloadFlame()          // the charge-up preview takes the same colours at once
             fPrev.playLoops(2)                       // plays two loops of fire in the new colours, then pauses
             if (done) DragonService.instance?.view?.reloadFlame()
         }
@@ -483,7 +492,7 @@ class MainActivity : Activity() {
             tabLog.setTextColor(if (log) FG else MUTED)
             try {
                 if (!tabsReady) return
-                if (log) { sliders.forEach { it.release() }; flamePreview?.stop(); refresh() } else flamePreview?.showStill()
+                if (log) { sliders.forEach { it.release() }; flamePreview?.stop(); refresh() } else { flamePreview?.showStill(); chargePreview?.reloadFlame() }
             } catch (_: Throwable) {
             }
         }
@@ -723,7 +732,7 @@ class MainActivity : Activity() {
         })
         DragonService.appOpen = true
         DragonService.instance?.refreshHold()
-        try { if (!logTab) flamePreview?.showStill() } catch (_: Throwable) {}
+        try { if (!logTab) { flamePreview?.showStill(); chargePreview?.reloadFlame() } } catch (_: Throwable) {}
         // the icon finder was switched on in Android's settings before the user agreed here: show the disclosure now
         if (intent?.getBooleanExtra("a11y_disclosure", false) == true) {
             intent.removeExtra("a11y_disclosure")
