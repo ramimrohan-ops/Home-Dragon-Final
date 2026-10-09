@@ -15,6 +15,7 @@ import android.graphics.Typeface
 import android.hardware.display.DisplayManager
 import android.os.SystemClock
 import android.view.Choreographer
+import android.view.MotionEvent
 import android.view.View
 import kotlin.math.cos
 import kotlin.math.max
@@ -44,7 +45,6 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
         const val FLYING = 3
         const val SEETHROUGH = 4
         const val CHARGE = 5
-        const val CHARGEQ = 6                     // Charge-up quality preview: the same charge-up, at the quality of the slider
         private const val FLY_W = 256f               // flying pose: width in model units
         private const val FLY_H = 250f               // flying pose: height in model units
         private const val FLY_CX = -31.5f            // flying pose: horizontal centre
@@ -162,22 +162,23 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
     private fun rate(): Float = when (kind) {
         QUALITY -> min(30f, max(5f, hz * pct / 100f))      // sitting still: 30 fps at most
         FLYING -> max(5f, hz * pct / 100f)
-        CHARGE, CHARGEQ -> min(60f, hz)
+        CHARGE -> min(60f, hz)
         else -> hz
     }
 
-    private val isCharge get() = kind == CHARGE || kind == CHARGEQ
+    private val isCharge get() = kind == CHARGE
     private val fireKind get() = kind == PARTICLES || isCharge
-    // charge-up seconds: the Charge-up time preview uses its own slider value, the quality preview the saved Charge-up time (1.5 s when that is Off)
-    private var qTime = 1.5f
+    // The charge-up box is shared by three sliders: Charge-up time (pct, in tenths of a second), Charge-up quality and wave thickness
     private var qPct = 100
-    private val chargeS get() = when (kind) { CHARGE -> pct / 10f; CHARGEQ -> qTime; else -> 0f }
-    private val chargeQ get() = (if (kind == CHARGEQ) pct else qPct) / 100f
-    private fun loadCharge() {
-        val t = Prefs.chargeTenths(context)
-        qTime = if (t > 0) t / 10f else 1.5f
-        qPct = Prefs.chargeQualityPct(context)
-    }
+    private var thickPct = 100
+    private val chargeS get() = if (kind == CHARGE) pct / 10f else 0f
+    private val chargeQ get() = qPct / 100f
+    private val chargeThick get() = thickPct / 100f
+    private var flyPose = kind == CHARGE && Prefs.chargeFlyPose(context)       // Sitting / Flying switch in the corner of the box
+
+    fun setQuality(v: Int) { if (v == qPct) return; qPct = v; refreshIdle() }
+    fun setThickness(v: Int) { if (v == thickPct) return; thickPct = v; refreshIdle() }
+    private fun refreshIdle() { if (!running) { if (fireKind) warm(); invalidate() } }
 
     fun setValue(v: Int) {
         if (v == pct) return
@@ -215,7 +216,6 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
 
     private fun beginAnim() {
         if (running) return
-        loadCharge()
         running = true
         reloadFlame()
         lastNs = 0L; dueNs = 0L
@@ -322,6 +322,7 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
         if (nextBlink <= 0f) { blink = 0.14f; nextBlink = 2f + rnd() * 3f }
         if (blink > 0f) blink -= dt
         if (kind == FLYING || kind == SEETHROUGH) wingPh += dt * 6.2832f * 2.2f
+        else if (isCharge && flyPose) wingPh += dt * 6.2832f * 1.1f
         if (fireKind) {
             step(dt)
             if (loopsLeft == 0) { halt(); warm() }       // the requested loops are done: pause on a still picture
@@ -341,8 +342,8 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
     /** Run the fire for a moment so a still picture already shows a flame in flight. */
     private fun warm() {
         if (!geomReady) return
-        loadCharge()
         nf = 0; ns = 0; acc = 0f; heat = 0f; mouth = 0f; cyc = 0.45f
+        if (isCharge) wingPh = 0f                   // a still picture shows the wings in their spread rest position
         if (chargeS > 0.05f) {                      // still picture of the charge: the orb is gathering in the mouth
             cyc = 0.3f + 0.88f * chargeS; mouth = 1f
             return
@@ -471,7 +472,7 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
             QUALITY -> drawFps(c, w, h, false)
             FLYING -> drawFps(c, w, h, true)
             SEETHROUGH -> drawSeeThrough(c, w, h)
-            CHARGE, CHARGEQ -> drawChargeScene(c, w, h)
+            CHARGE -> drawChargeScene(c, w, h)
             else -> drawParticles(c, w, h)
         }
         c.restore()
@@ -619,14 +620,27 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
     private fun layoutChargeDragon() {
         val w = width.toFloat(); val h = height.toFloat()
         if (w <= 0f || h <= 0f) return
-        val base = h - dp(26f)
-        val ds = min(w * 0.46f / MODEL_W, (base - dp(8f)) / MODEL_H)
         sit(st, t)
         st.mouth = mouth
-        st.mouthGlow = if (chargeS > 0.05f) (if (cyc >= 0.3f + chargeS) mouth else 0f) else -1f     // no fire in the mouth until the breath starts
-        st.ds = ds
-        st.x = dp(10f) - (MODEL_CX - MODEL_W * 0.5f) * ds
-        st.y = base
+        // no fire in the mouth until the breath starts
+        st.mouthGlow = if (chargeS > 0.05f) (if (cyc >= 0.3f + chargeS) mouth else 0f) else -1f
+        if (flyPose) {
+            // hovering with the wings spread, on the left; the breath goes out to the right
+            st.sp = 1f
+            st.head = model.restHead(1f, 0f)
+            st.wingPh = wingPh + 0.6f
+            st.bob = 0f
+            val ds = min(w * 0.56f / FLY_W, (h - dp(34f)) * 0.94f / FLY_H)
+            st.ds = ds
+            st.x = dp(6f) + FLY_W * ds * 0.5f - FLY_CX * ds
+            st.y = (h - dp(18f)) / 2f - FLY_CY * ds
+        } else {
+            val base = h - dp(26f)
+            val ds = min(w * 0.46f / MODEL_W, (base - dp(8f)) / MODEL_H)
+            st.ds = ds
+            st.x = dp(10f) - (MODEL_CX - MODEL_W * 0.5f) * ds
+            st.y = base
+        }
         model.mouthPos(st, tmp)
         mx = tmp[0]; my = tmp[1]
         icx = min(w - dp(8f), mx + w * 0.36f); icy = my + dp(8f); icSize = dp(34f)
@@ -636,10 +650,12 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
         if (!geomReady) return
         layoutChargeDragon()
         val ds = st.ds
-        // ground line under the dragon
-        fill.color = Color.argb(200, 220, 230, 247)
-        val gl = st.x + (MODEL_CX - MODEL_W * 0.5f) * ds
-        c.drawRoundRect(gl, st.y, gl + MODEL_W * ds, st.y + dp(4f), dp(2f), dp(2f), fill)
+        if (!flyPose) {
+            // ground line under the dragon
+            fill.color = Color.argb(200, 220, 230, 247)
+            val gl = st.x + (MODEL_CX - MODEL_W * 0.5f) * ds
+            c.drawRoundRect(gl, st.y, gl + MODEL_W * ds, st.y + dp(4f), dp(2f), dp(2f), fill)
+        }
         model.draw(c, st)
         drawChargeFx(c)
         // flames of the breath
@@ -655,9 +671,54 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
         textFill.textSize = dp(10.5f); textFill.color = Color.parseColor("#B8C6E4")
         textFill.textAlign = Paint.Align.CENTER
         textFill.setShadowLayer(dp(3f), 0f, dp(1f), Color.argb(200, 0, 0, 0))
-        c.drawText(if (kind == CHARGEQ) "charge-up quality: $pct%" else if (chargeS <= 0.05f) "charge-up: off" else "charge-up: " + String.format("%.1f", chargeS) + " s", w / 2f, h - dp(8f), textFill)
+        c.drawText(
+            if (chargeS <= 0.05f) "charge-up: off" else String.format("%.1f s  -  quality %d%%  -  wave %d%%", chargeS, qPct, thickPct),
+            w / 2f, h - dp(8f), textFill
+        )
         textFill.setShadowLayer(0f, 0f, 0f, 0)
+        // Sitting / Flying switch in the top-left corner
+        val pwid = dp(50f); val phgt = dp(20f); val pgap = dp(4f)
+        textFill.textSize = dp(9.5f); textFill.textAlign = Paint.Align.CENTER
+        for (i in 0..1) {
+            val x0 = dp(6f) + i * (pwid + pgap); val y0 = dp(6f)
+            poseRect[i].set(x0, y0, x0 + pwid, y0 + phgt)
+            val on = (i == 1) == flyPose
+            fill.color = if (on) Color.argb(235, 46, 196, 182) else Color.argb(130, 40, 56, 96)
+            c.drawRoundRect(poseRect[i], phgt / 2f, phgt / 2f, fill)
+            textFill.color = if (on) Color.parseColor("#06222B") else Color.parseColor("#B8C6E4")
+            c.drawText(if (i == 0) "Sitting" else "Flying", x0 + pwid / 2f, y0 + phgt / 2f + dp(3.4f), textFill)
+        }
         textFill.textAlign = Paint.Align.CENTER
+    }
+
+    private val poseRect = arrayOf(RectF(), RectF())
+    private var downHit = -1
+
+    /** Tap on Sitting / Flying (charge-up box only); everything else is left to the scrolling page. */
+    override fun onTouchEvent(e: MotionEvent): Boolean {
+        if (!isCharge) return super.onTouchEvent(e)
+        val hit = if (poseRect[0].contains(e.x, e.y)) 0 else if (poseRect[1].contains(e.x, e.y)) 1 else -1
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> { downHit = hit; return hit >= 0 }
+            MotionEvent.ACTION_UP -> {
+                val h0 = downHit; downHit = -1
+                if (h0 >= 0 && h0 == hit) { setPose(hit == 1); return true }
+                return h0 >= 0
+            }
+            MotionEvent.ACTION_CANCEL -> { downHit = -1; return false }
+        }
+        return downHit >= 0
+    }
+
+    private fun setPose(fly: Boolean) {
+        if (fly == flyPose) return
+        flyPose = fly
+        Prefs.setChargeFlyPose(context, fly)
+        if (!geomReady) { invalidate(); return }
+        // play the charge-up twice in the new pose, then hold a still picture
+        nf = 0; ns = 0; acc = 0f; heat = 0f; mouth = 0f; cyc = 0f
+        touch()
+        playLoops(2)
     }
 
     // the charge-up effect itself is shared with the dragon on the home screen (ChargeFx)
@@ -688,7 +749,7 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
         // the breath lasts from 0.3 + off to 2.25 + off; after it everything fades out in one second
         val fireDur = 1.95f
         fxCanvas = c
-        chargeFx.draw(st, st.ds, t, off, u, ft, ft - fireDur, fireDur, ft < 0f, chargeQ)
+        chargeFx.draw(st, st.ds, t, off, u, ft, ft - fireDur, fireDur, ft < 0f, chargeQ, chargeThick)
         fxCanvas = null
     }
 

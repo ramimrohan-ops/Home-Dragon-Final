@@ -92,6 +92,7 @@ class DragonView(context: Context) : View(context) {
     private var acc = 0f
     private var walkTo = 0f
     private var fireDur = 1.7f
+    private var chargeThick = 1f           // Charge-up wave thickness slider
     private var chargeQ = 1f            // Charge-up quality slider: scales the sparks, imploding particles and waves of the charge-up
     private var chargeT = 1.5f            // charge-up before every fire breath (seconds, "Charge-up time" slider, 0 = off): tail tip -> spine spikes -> neck -> orb in the mouth
     private val chB = FloatArray(16)
@@ -510,6 +511,7 @@ class DragonView(context: Context) : View(context) {
         pq = clampF(Prefs.particlePct(context) / 100f, 0.1f, 1f)
         chargeT = Prefs.chargeTenths(context) / 10f
         chargeQ = clampF(Prefs.chargeQualityPct(context) / 100f, 0.1f, 1f)
+        chargeThick = clampF(Prefs.chargeThickPct(context) / 100f, 0.5f, 2f)
         spdMul = clampF(Prefs.speedPct(context) / 100f, 0.5f, 1.5f)
         // transparency: 0 = solid .. 100 = barely visible; the model draws the whole dragon as one fading layer
         model.setTransparency(Prefs.transparencyPct(context), Prefs.wingTransPct(context))
@@ -1256,7 +1258,7 @@ class DragonView(context: Context) : View(context) {
         val fe = if (firing) fireFt - fireDur else 1f - chSpark
         val ft = if (firing) fireFt else fireDur + fe
         chargeFx.draw(st, ds, time, chargeT, if (firing) clampF(t / chargeT, 0f, 1f) else 1f, ft, fe, fireDur,
-            firing && fireFt < 0f, chargeQ)
+            firing && fireFt < 0f, chargeQ, chargeThick)
         fxCanvas = null
     }
 

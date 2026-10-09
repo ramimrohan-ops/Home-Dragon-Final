@@ -61,6 +61,8 @@ object Prefs {
 
     fun chargeTenths(c: Context) = (((sp(c).getInt("charge", 15) + 2) / 5) * 5).coerceIn(0, 30)   // fire charge-up time in tenths of a second, 0 = off
     fun chargeQualityPct(c: Context) = snap(sp(c).getInt("charge_quality", 100), 10, 100)   // charge-up sparks, particles and waves, 10..100
+    fun chargeThickPct(c: Context) = snap(sp(c).getInt("charge_thick", 100), 50, 200)       // thickness of the charge-up wave, 50..200
+    fun chargeFlyPose(c: Context) = sp(c).getBoolean("charge_fly_pose", false)               // the charge-up preview box shows the flying pose
     fun scalePct(c: Context) = snap(sp(c).getInt("scale", 100), 50, 150)          // dragon size, 50..150
     fun speedPct(c: Context) = snap(sp(c).getInt("speed", 100), 50, 150)          // dragon speed, 50..150
     fun qualityPct(c: Context) = snap(sp(c).getInt("quality", 100), 10, 100)      // frame rate, 10..100
@@ -76,6 +78,8 @@ object Prefs {
 
     fun setChargeTenths(c: Context, v: Int) = sp(c).edit().putInt("charge", v).apply()
     fun setChargeQualityPct(c: Context, v: Int) = sp(c).edit().putInt("charge_quality", v).apply()
+    fun setChargeThickPct(c: Context, v: Int) = sp(c).edit().putInt("charge_thick", v).apply()
+    fun setChargeFlyPose(c: Context, v: Boolean) = sp(c).edit().putBoolean("charge_fly_pose", v).apply()
     fun setScalePct(c: Context, v: Int) = sp(c).edit().putInt("scale", v).apply()
     fun setSpeedPct(c: Context, v: Int) = sp(c).edit().putInt("speed", v).apply()
     fun setQualityPct(c: Context, v: Int) = sp(c).edit().putInt("quality", v).apply()

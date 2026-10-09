@@ -54,7 +54,6 @@ class MainActivity : Activity() {
     private val sliders = ArrayList<Slider>()
     private var flamePreview: PreviewView? = null
     private var chargePreview: PreviewView? = null
-    private var chargeQPreview: PreviewView? = null
     private var logTab = false
     private lateinit var scrollView: ScrollView
     private lateinit var pageMainView: LinearLayout
@@ -106,7 +105,8 @@ class MainActivity : Activity() {
         private val save: (Int) -> Unit, private val live: () -> Unit, private val step: Int = 1,
         private val previews: List<PreviewView> = emptyList(), previewDp: Int = 150,
         private val def: Int = 100, private val showPreviews: Boolean = true,
-        private val fmt: (Int) -> String = { "$it%" }
+        private val fmt: (Int) -> String = { "$it%" },
+        private val feed: (PreviewView, Int) -> Unit = { p, v -> p.setValue(v) }
     ) {
         val value = text(fmt(start), 15f, TEAL, true)
         val seek = SeekBar(this@MainActivity)
@@ -165,7 +165,7 @@ class MainActivity : Activity() {
                 override fun onProgressChanged(s: SeekBar, p: Int, fromUser: Boolean) {
                     val v = p * step + min
                     value.text = fmt(v)
-                    previews.forEach { it.setValue(v) }
+                    previews.forEach { feed(it, v) }
                     if (fromUser) { previews.forEach { it.touch() }; save(v); live() }
                 }
                 override fun onStartTrackingTouch(s: SeekBar) {
@@ -341,28 +341,41 @@ class MainActivity : Activity() {
             50, 150, Prefs.speedPct(this), { Prefs.setSpeedPct(this, it) }, { DragonService.instance?.view?.reloadSettings() },
             step = 10
         )
+        // one preview box for the three charge-up sliders (time, quality, wave thickness); Sitting / Flying is switched inside the box
         val chargePrev = PreviewView(this, PreviewView.CHARGE)
         chargePreview = chargePrev
+        chargePrev.setValue(Prefs.chargeTenths(this))
+        chargePrev.setQuality(Prefs.chargeQualityPct(this))
+        chargePrev.setThickness(Prefs.chargeThickPct(this))
         val charge = Slider(
             "Charge-up time", "Glow that builds before every fire breath, in your flame colours. Off = no charge-up.",
             0, 30, Prefs.chargeTenths(this), { Prefs.setChargeTenths(this, it) }, { DragonService.instance?.view?.reloadSettings() },
-            step = 5, previews = listOf(chargePrev), previewDp = 170, def = 15,
+            step = 5, previews = listOf(chargePrev), showPreviews = false, def = 15,
             fmt = { if (it == 0) "Off" else String.format("%.1f s", it / 10f) }
         )
-        val chargeQPrev = PreviewView(this, PreviewView.CHARGEQ)
-        chargeQPreview = chargeQPrev
         val chargeQ = Slider(
-            "Charge-up quality", "How many sparks, particles and waves. Lower = lighter.",
+            "Charge-up quality", "How many sparks and particles. Lower = lighter.",
             10, 100, Prefs.chargeQualityPct(this), { Prefs.setChargeQualityPct(this, it) }, { DragonService.instance?.view?.reloadSettings() },
-            step = 10, previews = listOf(chargeQPrev), previewDp = 170, def = 100
+            step = 10, previews = listOf(chargePrev), showPreviews = false, def = 100,
+            feed = { p, v -> p.setQuality(v) }
         )
-        sliders.addAll(listOf(quality, particles, size, speed, charge, chargeQ))
+        val chargeW = Slider(
+            "Charge-up wave thickness", "How thick the glowing wave is.",
+            50, 200, Prefs.chargeThickPct(this), { Prefs.setChargeThickPct(this, it) }, { DragonService.instance?.view?.reloadSettings() },
+            step = 10, previews = listOf(chargePrev), showPreviews = false, def = 100,
+            feed = { p, v -> p.setThickness(v) }
+        )
+        sliders.addAll(listOf(quality, particles, size, speed, charge, chargeQ, chargeW))
         settings.addView(quality.view)
         settings.addView(divider()); settings.addView(particles.view)
         settings.addView(divider()); settings.addView(size.view)
         settings.addView(divider()); settings.addView(speed.view)
-        settings.addView(divider()); settings.addView(charge.view)
+        settings.addView(divider())
+        settings.addView(chargePrev, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(190)).apply { bottomMargin = dp(6) })
+        settings.addView(text("Preview for the three charge-up sliders below. Tap Sitting or Flying in the box.", 11f, MUTED))
+        settings.addView(charge.view)
         settings.addView(divider()); settings.addView(chargeQ.view)
+        settings.addView(divider()); settings.addView(chargeW.view)
         col.addView(settings)
 
         // visual: flame colours (live preview + picker, blue is the default) and the two transparency sliders
@@ -379,7 +392,7 @@ class MainActivity : Activity() {
         val picker = FlamePicker(this) { cols, done ->
             Prefs.setFlameColors(this, cols)
             fPrev.reloadFlame()
-            chargePreview?.reloadFlame(); chargeQPreview?.reloadFlame()          // the charge-up preview takes the same colours at once
+            chargePreview?.reloadFlame()          // the charge-up preview takes the same colours at once
             fPrev.playLoops(2)                       // plays two loops of fire in the new colours, then pauses
             if (done) DragonService.instance?.view?.reloadFlame()
         }
@@ -501,7 +514,7 @@ class MainActivity : Activity() {
             tabLog.setTextColor(if (log) FG else MUTED)
             try {
                 if (!tabsReady) return
-                if (log) { sliders.forEach { it.release() }; flamePreview?.stop(); refresh() } else { flamePreview?.showStill(); chargePreview?.reloadFlame(); chargeQPreview?.reloadFlame() }
+                if (log) { sliders.forEach { it.release() }; flamePreview?.stop(); refresh() } else { flamePreview?.showStill(); chargePreview?.reloadFlame() }
             } catch (_: Throwable) {
             }
         }
@@ -741,7 +754,7 @@ class MainActivity : Activity() {
         })
         DragonService.appOpen = true
         DragonService.instance?.refreshHold()
-        try { if (!logTab) { flamePreview?.showStill(); chargePreview?.reloadFlame(); chargeQPreview?.reloadFlame() } } catch (_: Throwable) {}
+        try { if (!logTab) { flamePreview?.showStill(); chargePreview?.reloadFlame() } } catch (_: Throwable) {}
         // the icon finder was switched on in Android's settings before the user agreed here: show the disclosure now
         if (intent?.getBooleanExtra("a11y_disclosure", false) == true) {
             intent.removeExtra("a11y_disclosure")

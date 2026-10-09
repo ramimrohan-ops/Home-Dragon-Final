@@ -308,3 +308,10 @@ Android blocks accessibility services of apps installed outside an app store. Th
 - **Orb complete at 85% of the charge-up time** (it used to reach full size only at the instant the breath started). For the last 15% the finished orb holds, a little brighter and throbbing, and then the breath starts.
 - **Imploding particles thin out and stop** arriving by 85%. No particles are pulled in during the breath; the orb just shrinks through the breath as before. Home screen and charge-up previews.
 - With a short Charge-up time (0.5 s) the hold is only about 0.08 s; at 3.0 s it is about 0.45 s.
+
+## v3.3 - one wave, wave thickness slider, one shared charge-up preview with Sitting / Flying
+- **One wave during the charge-up.** Each of the 9 sources (8 claw tips, tail tip) sends a single wave: along the finger bone to the wrist, the arm bone to the shoulder (flash there); from the tail tip along the spine and neck into the mouth. It reaches the mouth at about 85% of the charge-up time, as the orb is complete. The bones and spikes stay softly lit behind the wave until the breath ends. No new waves during the breath; the arcs between the spikes go on as before.
+- **New slider "Charge-up wave thickness"** (50..200%, default 100%): widens the wave along the bone and thickens its glow. Only the wave itself changes, not the softly lit bones.
+- **Charge-up quality** now scales only the sparks and the imploding particles (the wave count is always one).
+- **One shared preview box** for Charge-up time, Charge-up quality and Charge-up wave thickness (it used to be one box per slider). Same rules: still while dragging, loops after release, stops about 5 seconds after the last touch of any of the three sliders. Caption: time, quality and wave.
+- **Sitting / Flying switch** in the top-left corner of that box. Tap to change the pose; the charge-up then plays twice in the new pose. Flying = hovering with the wings spread and flapping slowly, the wave follows the moving wing bones. The choice is remembered.

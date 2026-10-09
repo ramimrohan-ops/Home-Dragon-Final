@@ -11,10 +11,10 @@ import kotlin.math.sin
 /**
  * The fire charge-up, shared by the dragon on the home screen and the Charge-up time preview.
  *
- * It starts at 9 points: the tail tip and the 8 claw tips of the two wings. Each one is a steady glowing source that keeps sending out waves
- * (never a loop that restarts): from a claw tip along the finger bone to the wrist, then the arm bone to the shoulder; from the tail tip along
- * the spine spikes to the shoulder and on up the neck into the mouth. Waves are sent for the whole charge and the whole breath, then stop and
- * fade out. In the middle of the open mouth an orb grows and imploding particles (straight lines, accelerating, up to 120) are pulled into
+ * It starts at 9 points: the tail tip and the 8 claw tips of the two wings. Each one is a steady glowing source that sends out ONE wave during
+ * the charge-up: from a claw tip along the finger bone to the wrist, then the arm bone to the shoulder; from the tail tip along the spine
+ * spikes to the shoulder and on up the neck into the mouth, arriving at about 85% of the charge. Behind the wave the bones and spikes stay
+ * softly lit until the breath ends, then everything fades out. The wave thickness (th, 0.5..2) widens the wave and its glow. In the middle of the open mouth an orb grows and imploding particles (straight lines, accelerating, up to 120) are pulled into
  * it; during the breath the orb shrinks steadily and is smallest when the breath ends. Short electric arcs (up to 12 gaps between the spine
  * spikes at a time, a new random set 10 times a second) run for the whole charge and breath. The Charge-up quality (cq, 0.1..1) scales the
  * number of arcs, particles and waves together. Colours come from an 8-step gradient of the flame colours (index 0 = hot core .. 7 = cool tip).
@@ -46,10 +46,10 @@ class ChargeFx(private val model: DragonModel, private val p: Painter) {
     private var ds = 1f; private var time = 0f; private var amt = 0f
     private var build = 0f; private var rate = 0f
     private var tc = 0f                 // seconds since the charge began
-    private var travel = 0.9f           // seconds a wave needs from the claw tip / tail tip to the shoulder
-    private var period = 0.28f          // seconds between two waves
-    private var tEnd = 99f              // the last wave is sent at this time (end of the breath)
-    private var x0w = 0f                // front of the very first wave
+    private var travel = 0.9f           // seconds the wave needs from the claw tip / tail tip to the shoulder
+    private var wd = 0.13f              // half width of the wave along the path
+    private var th = 1f                 // wave thickness
+    private var x0w = 0f                // front of the wave
 
     private fun sm(a: Float, b: Float, x: Float): Float {
         val u = ((x - a) / (b - a)).coerceIn(0f, 1f)
@@ -66,27 +66,17 @@ class ChargeFx(private val model: DragonModel, private val p: Painter) {
     /** Gradient index for "heat" g: 0 = cool (claw tip / tail tip) .. 1 = hot (neck, mouth). */
     private fun gi(g: Float): Int = ((1f - g.coerceIn(0f, 1f)) * 7f + 0.5f).toInt().coerceIn(0, 7)
 
-    /**
-     * Strength of the waves at position x on a path (0 = claw tip / tail tip, 1 = shoulder, 1.3 = mouth).
-     * Waves are sent one after another from position 0 at a fixed rhythm, so there are always several on the bone, and nothing ever restarts.
-     */
+    /** Strength of the single wave at position x on a path (0 = claw tip / tail tip, 1 = shoulder, 1.3 = mouth). */
     private fun waveSum(x: Float): Float {
-        var s = 0f
-        var j = min((tc / period).toInt(), (tEnd / period).toInt())
-        while (j >= 0) {
-            val pj = (tc - j * period) / travel
-            if (pj > x + 0.42f) break
-            if (pj >= x - 0.42f) { val d = (x - pj) / 0.13f; s += exp(-d * d) }
-            j--
-        }
-        return min(1.3f, s)
+        val d = (x - tc / travel) / wd
+        return if (d > 4f || d < -4f) 0f else exp(-d * d)
     }
 
     /**
      * u = charge progress 0..1; ft = seconds since the breath started (negative while charging); fe = seconds since the breath ended
-     * (0 or negative until then); fireDur = length of the breath; charging = still charging; cq = Charge-up quality 0.1..1.
+     * (0 or negative until then); fireDur = length of the breath; charging = still charging; cq = Charge-up quality 0.1..1; thick = wave thickness 0.5..2.
      */
-    fun draw(st: DragonModel.State, scale: Float, now: Float, chargeT: Float, u: Float, ft: Float, fe: Float, fireDur: Float, charging: Boolean, cq: Float) {
+    fun draw(st: DragonModel.State, scale: Float, now: Float, chargeT: Float, u: Float, ft: Float, fe: Float, fireDur: Float, charging: Boolean, cq: Float, thick: Float) {
         if (chargeT <= 0.05f) return
         ds = scale; time = now
         val fade = if (charging || fe <= 0f) 1f else 1f - sm(0f, 1f, fe)         // after the breath everything fades out in one second
@@ -97,9 +87,9 @@ class ChargeFx(private val model: DragonModel, private val p: Painter) {
         build = 0.5f + 0.5f * u
         rate = 14f + 26f * u
         tc = if (charging) u * chargeT else chargeT + max(0f, ft)
-        tEnd = chargeT + fireDur
-        travel = (chargeT * 0.6f).coerceIn(0.4f, 1.1f)
-        period = travel / (1f + 2.2f * cq.coerceIn(0.1f, 1f))                        // about 3 waves on a bone at 100%, 1 at 10%
+        travel = (chargeT * 0.65f).coerceAtLeast(0.3f)                              // the wave reaches the mouth (1.3 x travel) at about 85%
+        th = thick.coerceIn(0.5f, 2f)
+        wd = 0.13f * th
         x0w = tc / travel
         val n = model.chargePoints(st, cbx, cby, ctx, cty, cfr)
         val hasNear = model.wingPoints(st, false, nearW)
@@ -149,7 +139,7 @@ class ChargeFx(private val model: DragonModel, private val p: Painter) {
         for (k in 0 until n) {
             val b = chB[k]
             if (b <= 0.01f) continue
-            val fk = 0.9f + 0.5f * min(1f, wvK[k])
+            val fk = (0.9f + 0.5f * min(1f, wvK[k])) * (1f + (th - 1f) * min(1f, wvK[k]))
             val g = cfr[k] * 0.8f + 0.1f                                           // cool at the tail, hot near the head
             p.glow(gi(g), cbx[k], cby[k], 17f * ds * fk, b * 0.38f)
             p.glow(gi(g + 0.1f), cbx[k], cby[k], 9f * ds, b * 0.8f)
@@ -306,8 +296,9 @@ class ChargeFx(private val model: DragonModel, private val p: Painter) {
         if (b <= 0.01f) return
         if (pass == 0) { p.halo(x, y, 9f * ds * size, b * 0.4f); return }
         val g = xc * 0.85f                                                           // cool at the claw tip, hot near the shoulder
-        p.glow(gi(g), x, y, 12f * ds * size * (0.85f + 0.4f * min(1f, wv)), b * 0.5f)
-        p.glow(gi(g + 0.25f), x, y, 6.5f * ds * size, b * 0.9f)
+        val tk = 1f + (th - 1f) * min(1f, wv)                                        // only the wave itself gets thicker
+        p.glow(gi(g), x, y, 12f * ds * size * (0.85f + 0.4f * min(1f, wv)) * tk, b * 0.5f)
+        p.glow(gi(g + 0.25f), x, y, 6.5f * ds * size * tk, b * 0.9f)
         p.glow(0, x, y, 2.8f * ds * size, b)
     }
 }
