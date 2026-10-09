@@ -502,7 +502,7 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
     }
 
     /** Charge-up in the mouth: sparks and rings pulled into a growing orb, then a flash and a ring at the moment of the breath. */
-    private fun drawChargeFx() {
+    private fun drawChargeFx(c: Canvas) {
         val off = chargeS
         if (off <= 0.05f) return
         val hs = headSt.ds
@@ -576,7 +576,7 @@ class PreviewView(context: Context, private val kind: Int) : View(context) {
             sprite(c, 1, mx, my, dp(13f) * mouth, 0.8f * mouth)
             sprite(c, 0, mx, my, dp(6f) * mouth, 0.9f * mouth)
         }
-        if (kind == CHARGE) drawChargeFx()
+        if (kind == CHARGE) drawChargeFx(c)
         // sparks
         for (i in 0 until ns) {
             val a = sage[i] / slife[i]
