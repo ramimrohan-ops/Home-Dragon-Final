@@ -2,7 +2,13 @@ package com.ramim.homedragon
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.app.KeyguardManager
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.os.PowerManager
+import androidx.core.content.ContextCompat
 import android.graphics.Rect
 import android.graphics.RectF
 import android.os.Handler
@@ -47,9 +53,104 @@ class IconFinderService : AccessibilityService() {
         IconRegistry.modeChanged = { handler.post { updateMode() } }
         KeepAlive.ensureDragon(this, "icon finder connected")
         IconRegistry.listener?.invoke()
+        if (!signalReceiverOn) {
+            try {
+                ContextCompat.registerReceiver(
+                    this, signalReceiver,
+                    IntentFilter().apply {
+                        addAction(Intent.ACTION_SCREEN_OFF)
+                        addAction(Intent.ACTION_SCREEN_ON)
+                        addAction(Intent.ACTION_USER_PRESENT)
+                    },
+                    ContextCompat.RECEIVER_NOT_EXPORTED
+                )
+                signalReceiverOn = true
+            } catch (_: Throwable) {
+            }
+        }
+        publishHome()
+    }
+
+    // ---- Phone Status signal: "home screen on top, phone unlocked, screen on, no keyboard, no shade" ----
+
+    private val powerMgr by lazy { getSystemService(Context.POWER_SERVICE) as PowerManager }
+    private val keyguardMgr by lazy { getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager }
+    private var signalReceiverOn = false
+    private var sentHome: Boolean? = null
+    private var sentAt = 0L
+    private val publishRun1 = Runnable { publishHome() }
+    private val publishRun2 = Runnable { publishHome() }
+    private val heartbeat = Runnable { publishHome() }
+
+    private val signalReceiver = object : BroadcastReceiver() {
+        override fun onReceive(c: Context, i: Intent) {
+            publishHome()
+            queuePublish()                                  // look again once the screen or lock change has settled
+        }
+    }
+
+    /** Re-check shortly after a window change (0.15 s) and again when it has settled (0.7 s). */
+    private fun queuePublish() {
+        handler.removeCallbacks(publishRun1); handler.removeCallbacks(publishRun2)
+        handler.postDelayed(publishRun1, 150)
+        handler.postDelayed(publishRun2, 700)
+    }
+
+    /**
+     * Strict answer for Phone Status. True only when the screen is on, the phone is unlocked, the home screen is on top,
+     * no keyboard is showing and the focused window is the launcher (a pulled-down notification shade takes the focus).
+     */
+    private fun strictHome(): Pair<Boolean, String> {
+        if (!powerMgr.isInteractive) return false to "screen off"
+        if (keyguardMgr.isKeyguardLocked) return false to "phone locked"
+        if (!IconRegistry.onHome) return false to "another app or recents in front"
+        val launcher = IconRegistry.launcherPkg ?: return false to "launcher unknown"
+        try {
+            var focused: AccessibilityWindowInfo? = null
+            val r = Rect()
+            for (w in windows) {
+                if (w.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD) {
+                    w.getBoundsInScreen(r)
+                    if (r.height() > 0) return false to "keyboard showing"
+                }
+                if (focused == null && w.isFocused) focused = w
+            }
+            if (focused != null) {
+                val p = focused.root?.packageName?.toString()
+                if (focused.type != AccessibilityWindowInfo.TYPE_APPLICATION || p != launcher) {
+                    return false to "other window focused (" + (p ?: "system window") + ")"
+                }
+            }
+        } catch (_: Throwable) {
+        }
+        return true to "home on top"
+    }
+
+    /**
+     * Sends the answer to Phone Status. A change is sent at once. While the answer is "home", it is repeated every 2 s
+     * as a heartbeat, so Phone Status can tell that this service is still alive; "not home" is sent once.
+     */
+    private fun publishHome() {
+        handler.removeCallbacks(heartbeat)
+        if (!IconRegistry.serviceActive) return
+        val (home, why) = strictHome()
+        val now = System.currentTimeMillis()
+        if (home != sentHome || (home && now - sentAt >= 1500)) {
+            HomeSignal.send(this, home, why)
+            sentHome = home
+            sentAt = now
+        }
+        if (home) handler.postDelayed(heartbeat, 2000)
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
+        handler.removeCallbacks(heartbeat); handler.removeCallbacks(publishRun1); handler.removeCallbacks(publishRun2)
+        HomeSignal.send(this, false, "icon finder off")
+        sentHome = null
+        if (signalReceiverOn) {
+            try { unregisterReceiver(signalReceiver) } catch (_: Throwable) {}
+            signalReceiverOn = false
+        }
         Diag.log(this, "Icon finder disconnected")
         IconRegistry.modeChanged = null
         IconRegistry.light = false
@@ -272,6 +373,7 @@ class IconFinderService : AccessibilityService() {
         KeepAlive.ensureDragon(this, "screen change")    // dragon service gone while it should be on: start it again (cheap check, throttled)
         val launcher = IconRegistry.launcherPkg ?: return
         val type = event.eventType
+        if (type == AccessibilityEvent.TYPE_WINDOWS_CHANGED || type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) queuePublish()
 
         // Window list changes carry no package name, so they are handled first.
         if (type == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
