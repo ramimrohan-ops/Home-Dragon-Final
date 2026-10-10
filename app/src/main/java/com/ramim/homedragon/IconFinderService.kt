@@ -19,6 +19,9 @@ import android.view.accessibility.AccessibilityWindowInfo
 import kotlin.math.abs
 import kotlin.math.min
 
+/** How long the launcher must stay still after a swipe or scroll before icon positions are read again. */
+private const val SETTLE_MS = 300L
+
 /**
  * Finds home screen icon positions. It only reads node bounds (and whether a node is
  * clickable and labelled). It never reads or stores text.
@@ -387,7 +390,8 @@ class IconFinderService : AccessibilityService() {
                 info.eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or AccessibilityEvent.TYPE_WINDOWS_CHANGED
                 info.flags = AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
             } else {
-                info.eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or
+                // No content-changed events: a widget redrawing every second must not wake the icon finder.
+                info.eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
                     AccessibilityEvent.TYPE_VIEW_SCROLLED or AccessibilityEvent.TYPE_WINDOWS_CHANGED
                 info.flags = AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS or
                     AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
@@ -448,15 +452,14 @@ class IconFinderService : AccessibilityService() {
             else event.maxScrollX > 0 && event.scrollX != lastScrollX
             lastScrollX = event.scrollX
             lastScrollMs = System.currentTimeMillis()
-            if (horizontal) {
-                IconRegistry.swipeListener?.invoke()
-                // rescan shortly after the last scroll event, i.e. once the page has settled
-                handler.removeCallbacks(settleScan)
-                handler.postDelayed(settleScan, 150)
-                return
-            }
+            if (horizontal) IconRegistry.swipeListener?.invoke()
+            // Any swipe or scroll (pages, app drawer): rescan once, after 0.3 s without further scrolling.
+            handler.removeCallbacks(settleScan)
+            handler.postDelayed(settleScan, SETTLE_MS)
+            return
         }
-        if (pkg == launcher) queueScan()
+        // The launcher window itself changed (home came to front, drawer or folder opened): scan once.
+        if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && pkg == launcher) queueScan()
     }
 
     private fun queueScan() {
