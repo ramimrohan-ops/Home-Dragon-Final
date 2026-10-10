@@ -14,6 +14,7 @@
 
     <!-- Lets the app look up which app is the current home launcher (Android 11+ package visibility). -->
     <queries>
+        <package android:name="dev.ramim.phonestatus" />
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.HOME" />

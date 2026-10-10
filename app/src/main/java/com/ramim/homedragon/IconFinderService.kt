@@ -61,8 +61,10 @@ class IconFinderService : AccessibilityService() {
                         addAction(Intent.ACTION_SCREEN_OFF)
                         addAction(Intent.ACTION_SCREEN_ON)
                         addAction(Intent.ACTION_USER_PRESENT)
+                        addAction(HomeSignal.ACTION_ACK)      // Phone Status: "received"
+                        addAction(HomeSignal.ACTION_ASK)      // Phone Status: "what is the state now?"
                     },
-                    ContextCompat.RECEIVER_NOT_EXPORTED
+                    ContextCompat.RECEIVER_EXPORTED
                 )
                 signalReceiverOn = true
             } catch (_: Throwable) {
@@ -71,21 +73,37 @@ class IconFinderService : AccessibilityService() {
         publishHome()
     }
 
-    // ---- Phone Status signal: "home screen on top, phone unlocked, screen on, no keyboard, no shade" ----
+    // ---- Phone Status link: "home screen on top, phone unlocked, screen on, no keyboard, no shade" ----
+    // The state is sent once, when it changes. Phone Status answers "received"; without that answer it is sent again
+    // after 1 s, 2 s and 4 s, then given up (Phone Status asks for the state itself when it starts).
 
     private val powerMgr by lazy { getSystemService(Context.POWER_SERVICE) as PowerManager }
     private val keyguardMgr by lazy { getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager }
     private var signalReceiverOn = false
     private var sentHome: Boolean? = null
-    private var sentAt = 0L
+    private var seq = 0L
+    private var pendingSeq = 0L                 // 0 = nothing is waiting for a confirmation
+    private var pendingHome = false
+    private var pendingWhy = ""
+    private var tries = 0
+    private val waits = longArrayOf(1000, 2000, 4000, 4000)
     private val publishRun1 = Runnable { publishHome() }
     private val publishRun2 = Runnable { publishHome() }
-    private val heartbeat = Runnable { publishHome() }
+    private val resendRun = Runnable { resendPending() }
 
     private val signalReceiver = object : BroadcastReceiver() {
         override fun onReceive(c: Context, i: Intent) {
-            publishHome()
-            queuePublish()                                  // look again once the screen or lock change has settled
+            when (i.action) {
+                HomeSignal.ACTION_ACK -> onConfirmed(i.getLongExtra("seq", 0L), i.getBooleanExtra("home", false))
+                HomeSignal.ACTION_ASK -> {
+                    Diag.log(c, "Phone Status asked for the state")
+                    publishHome(true)
+                }
+                else -> {                                   // screen on / off / unlocked
+                    publishHome()
+                    queuePublish()                          // look again once the change has settled
+                }
+            }
         }
     }
 
@@ -126,26 +144,50 @@ class IconFinderService : AccessibilityService() {
         return true to "home on top"
     }
 
-    /**
-     * Sends the answer to Phone Status. A change is sent at once. While the answer is "home", it is repeated every 2 s
-     * as a heartbeat, so Phone Status can tell that this service is still alive; "not home" is sent once.
-     */
-    private fun publishHome() {
-        handler.removeCallbacks(heartbeat)
+    /** Sends the state when it differs from the last one sent (or always when [force] is true), then waits for the confirmation. */
+    private fun publishHome(force: Boolean = false) {
         if (!IconRegistry.serviceActive) return
         val (home, why) = strictHome()
-        val now = System.currentTimeMillis()
-        if (home != sentHome || (home && now - sentAt >= 1500)) {
-            HomeSignal.send(this, home, why)
-            sentHome = home
-            sentAt = now
+        if (!force && home == sentHome) return
+        sentHome = home
+        seq++
+        pendingSeq = seq; pendingHome = home; pendingWhy = why; tries = 0
+        HomeSignal.send(this, home, why, seq)
+        Diag.log(this, "Sent to Phone Status: " + (if (home) "home" else "not home") + " (" + why + ")")
+        handler.removeCallbacks(resendRun)
+        handler.postDelayed(resendRun, waits[0])
+    }
+
+    private fun resendPending() {
+        if (pendingSeq == 0L) return
+        if (tries >= waits.size - 1) {
+            Diag.log(this, "Phone Status did not confirm after " + (tries + 1) + " tries: stopped (it asks when it starts)")
+            pendingSeq = 0L
+            return
         }
-        if (home) handler.postDelayed(heartbeat, 2000)
+        tries++
+        HomeSignal.send(this, pendingHome, pendingWhy, pendingSeq)
+        Diag.log(this, "No confirmation yet, sent again (try " + (tries + 1) + ")")
+        handler.postDelayed(resendRun, waits[tries])
+    }
+
+    private fun onConfirmed(confirmedSeq: Long, confirmedHome: Boolean) {
+        if (pendingSeq == 0L || confirmedSeq != pendingSeq) return       // an old answer
+        handler.removeCallbacks(resendRun)
+        pendingSeq = 0L
+        if (confirmedHome == pendingHome) {
+            Diag.log(this, "Phone Status confirmed: " + (if (confirmedHome) "home" else "not home"))
+        } else {
+            Diag.log(this, "Phone Status confirmed a different state: sending again")
+            publishHome(true)
+        }
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
-        handler.removeCallbacks(heartbeat); handler.removeCallbacks(publishRun1); handler.removeCallbacks(publishRun2)
-        HomeSignal.send(this, false, "icon finder off")
+        handler.removeCallbacks(resendRun); handler.removeCallbacks(publishRun1); handler.removeCallbacks(publishRun2)
+        seq++
+        HomeSignal.send(this, false, "icon finder off", seq)
+        pendingSeq = 0L
         sentHome = null
         if (signalReceiverOn) {
             try { unregisterReceiver(signalReceiver) } catch (_: Throwable) {}
