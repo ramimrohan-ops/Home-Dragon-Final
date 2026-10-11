@@ -21,7 +21,20 @@ import kotlin.math.abs
 import kotlin.math.min
 
 /** How long the screen must stay still (no swipe, scroll or window change) before icon positions are read. Every scan waits this long. */
-private const val SETTLE_MS = 300L
+private const val SETTLE_MS = 500L
+
+/** After a scroll stops, the page number is read this much later (no scan wait), so Phone Status hears about a page change quickly. */
+private const val PAGE_READ_MS = 150L
+
+/** Light mode cannot read the page bar reliably. When the launcher shows up on top, the icon finder listens in full mode for this long, then goes back. */
+private const val PROBE_MS = 1000L
+
+/** Probes started by the hidden-dragon poll (not by a window change) are at least this far apart. */
+private const val POLL_PROBE_GAP_MS = 5000L
+
+private const val PROBE_NONE = 0
+private const val PROBE_EVENT = 1
+private const val PROBE_POLL = 2
 
 /** After a scan the screen is read once more this much later; while the boxes keep moving (an animation is still running) it is read again. */
 private const val VERIFY_MS = 300L
@@ -64,11 +77,12 @@ class IconFinderService : AccessibilityService() {
         IconRegistry.serviceActive = true
         IconRegistry.onHome = false                      // proven below (launcher on top and its page number readable), never assumed
         IconRegistry.page = 0; IconRegistry.pages = 0; IconRegistry.noItems = false
-        IconRegistry.recheck = { handler.post { recheckHome() } }
+        IconRegistry.recheck = { handler.post { recheckHome(PROBE_POLL) } }
+        IconRegistry.recheckNow = { handler.post { recheckHome(PROBE_EVENT) } }
         Diag.log(this, "Icon finder connected")
         light = false                                    // Android starts a connected service in full mode
         IconRegistry.light = false
-        IconRegistry.modeChanged = { handler.post { updateMode() } }
+        IconRegistry.modeChanged = { handler.post { updateMode(); if (!IconRegistry.idle) recheckHome(PROBE_EVENT) } }
         KeepAlive.ensureDragon(this, "icon finder connected")
         IconRegistry.listener?.invoke()
         if (!signalReceiverOn) {
@@ -231,7 +245,9 @@ class IconFinderService : AccessibilityService() {
         IconRegistry.modeChanged = null
         IconRegistry.light = false
         handler.removeCallbacks(rc1); handler.removeCallbacks(rc2)
-        IconRegistry.recheck = null
+        handler.removeCallbacks(probeRead1); handler.removeCallbacks(probeRead2); handler.removeCallbacks(endProbe); handler.removeCallbacks(pageCheck)
+        probeUntil = 0L
+        IconRegistry.recheck = null; IconRegistry.recheckNow = null
         IconRegistry.serviceActive = false
         IconRegistry.icons = emptyList()
         IconRegistry.page = 0; IconRegistry.pages = 0; IconRegistry.noItems = false
@@ -272,8 +288,12 @@ class IconFinderService : AccessibilityService() {
      */
     private fun homeFromWindows(): Check? {
         val launcher = IconRegistry.launcherPkg ?: return null
+        if (DragonService.appOpen) {                     // the Home Dragon app itself is in front: that is "another app", not home
+            launcherTop = false; notHomeWhy = "Home Dragon app open"
+            return Check(false, 0, 0)
+        }
         val f = front() ?: return null
-        launcherFront = f.pkg == launcher
+        launcherTop = f.pkg == launcher
         if (f.pkg == null) { notHomeWhy = "window in front cannot be read"; return Check(false, 0, 0) }
         if (f.pkg != launcher) { notHomeWhy = "another app in front"; return Check(false, 0, 0) }
         val bar = findBar(f.root, 0)
@@ -314,7 +334,7 @@ class IconFinderService : AccessibilityService() {
      * stop being the home screen (recents) without any further event.
      * With usage access on, an app in front comes straight from Android, even when its window cannot be read.
      */
-    private fun recheckHome() {
+    private fun recheckHome(probe: Int = PROBE_NONE) {
         if (!IconRegistry.serviceActive) return
         val launcher = IconRegistry.launcherPkg ?: return
         val top = Foreground.current(this)
@@ -323,7 +343,7 @@ class IconFinderService : AccessibilityService() {
             val active = try { rootInActiveWindow?.packageName?.toString() } catch (e: Exception) { null }
             if (active != launcher) {
                 notHomeWhy = "another app in front (usage access)"
-                launcherFront = false
+                launcherTop = false
                 leaveHome()
                 updateMode()
                 return
@@ -331,6 +351,7 @@ class IconFinderService : AccessibilityService() {
         }
         homeFromWindows()?.let { applyCheck(it) }
         updateMode()
+        if (probe != PROBE_NONE) maybeProbe(probe == PROBE_POLL)
     }
 
     private val rc1 = Runnable { recheckHome() }
@@ -343,16 +364,19 @@ class IconFinderService : AccessibilityService() {
     }
 
     private var light = false               // light mode: only window changes are delivered (see updateMode)
-    private var launcherFront = true        // the launcher window is in front (home, app drawer or recents): its screen still needs to be read
+    private var launcherTop = false         // the launcher window is the top application window (home, app drawer, recents or app vault)
+    private var probeUntil = 0L             // full mode is kept until this time (elapsedRealtime) while a probe runs
+    private var lastProbeAt = 0L
 
     /**
-     * Light mode while the dragon has nothing to follow: the home screen is not in front and the launcher is not in front
-     * either (another app is open), or the screen is off or locked. Android then only reports window changes, not every
-     * content change and scroll of the app in front, and does not build the full node tree. Full mode returns as soon as
-     * the launcher is in front again or the screen is awake and home is found.
+     * Full mode only while the home screen is on top (page bar proven). Everywhere else (another app, the Home Dragon app, recents, an
+     * app vault, screen off or locked) it is light mode: Android then only reports window changes, not every content change and scroll,
+     * and does not build the full node tree. Light mode cannot reliably read the page bar, so a probe (see [maybeProbe]) switches to full
+     * mode for a moment whenever the launcher shows up on top. (Switching the service off completely is not possible from inside it.)
      */
     private fun updateMode() {
-        val want = IconRegistry.idle || (!IconRegistry.onHome && !launcherFront)
+        val probing = SystemClock.elapsedRealtime() < probeUntil
+        val want = IconRegistry.idle || (!IconRegistry.onHome && !probing)
         if (want == light) return
         try {
             val info = getServiceInfo() ?: return
@@ -374,6 +398,31 @@ class IconFinderService : AccessibilityService() {
     }
 
     /** The window check's answer: home (with its page) comes on at once, no settle time; "not home" acts at once too. */
+    private val probeRead1 = Runnable { recheckHome() }
+    private val probeRead2 = Runnable { recheckHome() }
+    private val endProbe = Runnable { probeUntil = 0L; recheckHome() }          // last read still in full mode, then back to light
+    private val pageCheck = Runnable {
+        if (!IconRegistry.onHome) return@Runnable
+        val c = homeFromWindows()
+        if (c != null && c.home) applyCheck(c)           // only the page may change here; leaving home is decided by the window events
+    }
+
+    /**
+     * The launcher is the top window but the page bar was not read (light mode cannot): listen in full mode for [PROBE_MS], reading the
+     * page bar at 0.12 s, 0.4 s and at the end. Home found: full mode stays. Not home (recents, app vault, drawer): back to light mode.
+     * Another app on top: no probe at all.
+     */
+    private fun maybeProbe(poll: Boolean) {
+        if (!light || IconRegistry.idle || IconRegistry.onHome || !launcherTop) return
+        val now = SystemClock.elapsedRealtime()
+        if (poll && now - lastProbeAt < POLL_PROBE_GAP_MS) return
+        lastProbeAt = now
+        probeUntil = now + PROBE_MS
+        updateMode()                                     // full mode
+        handler.removeCallbacks(probeRead1); handler.removeCallbacks(probeRead2); handler.removeCallbacks(endProbe)
+        handler.postDelayed(probeRead1, 120); handler.postDelayed(probeRead2, 400); handler.postDelayed(endProbe, PROBE_MS)
+    }
+
     private fun applyCheck(c: Check) {
         if (!c.home) { leaveHome(); return }
         IconRegistry.page = c.page; IconRegistry.pages = c.pages
@@ -417,6 +466,7 @@ class IconFinderService : AccessibilityService() {
         if (type == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
             homeFromWindows()?.let { applyCheck(it) }
             updateMode()
+            maybeProbe(false)
             DragonService.instance?.resetHiddenBackoff()
             scheduleRechecks()                           // every window change, also while home: recents has no event of its own once the bar is gone
             return
@@ -426,9 +476,9 @@ class IconFinderService : AccessibilityService() {
         if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             // Ignore system overlays that do not change what the user is looking at.
             if (pkg == "com.android.systemui" || pkg == packageName) return
-            launcherFront = pkg == launcher
             homeFromWindows()?.let { applyCheck(it) }       // no window list: nothing is guessed, the last answer stays
             updateMode()
+            maybeProbe(false)
             DragonService.instance?.resetHiddenBackoff()
             scheduleRechecks()
         }
@@ -438,7 +488,8 @@ class IconFinderService : AccessibilityService() {
             else event.maxScrollX > 0 && event.scrollX != lastScrollX
             lastScrollX = event.scrollX
             if (horizontal) IconRegistry.swipeListener?.invoke()
-            scanSoon()                                       // any swipe or scroll (pages, app drawer): scan after 0.3 s without further scrolling
+            scanSoon()                                       // any swipe or scroll (pages, app drawer): scan after 0.5 s without further scrolling
+            handler.removeCallbacks(pageCheck); handler.postDelayed(pageCheck, PAGE_READ_MS)   // the page number is read sooner (Phone Status), no scan wait
             return
         }
         // The launcher window itself changed (home came to front, drawer or folder opened or closed): scan.

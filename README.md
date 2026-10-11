@@ -44,7 +44,7 @@ dumpsys deviceidle whitelist +com.ramim.homedragon
 
 ## Page-swipe fade
 
-When the launcher scrolls sideways (the icon finder sees scroll events), the dragon disappears at once and fades back in (0.4 s) as soon as the scan of the new page is done, landing on one of that page's icons. The scan waits 0.3 s without a swipe, scroll or window change; there is no extra delay after it. If the launcher sends no scroll events, the dragon still fades in when it notices the icon layout changed to a different page. A page where the scan finds nothing at all hides the dragon (it comes back with the next scan that finds an icon or widget); one item is enough to show it.
+When the launcher scrolls sideways (the icon finder sees scroll events), the dragon disappears at once, then fades back in (0.3 s) 0.3 s after the first scan of the new page has finished, landing on one of that page's icons. The scan waits 0.5 s without a swipe, scroll or window change. Later "stable" check scans do not restart the 0.3 s wait; a new swipe or leaving home cancels it. If the launcher sends no scroll events, the dragon still fades in when it notices the icon layout changed to a different page. A page where the scan finds nothing at all hides the dragon (it comes back with the next scan that finds an icon or widget); one item is enough to show it.
 
 ## Home screen or app?
 
@@ -376,3 +376,10 @@ Android blocks accessibility services of apps installed outside an app store. Th
 - **No two-item limit.** One icon or widget is enough: the layout is saved and sent. A page with nothing found hides the dragon (no grid fallback while the icon finder is on) and saves nothing.
 - **Re-check after every window change** (0.4 s and 0.8 s), also while home.
 - **Log tab.** "Last scans" lists the last 8 scans, newest first, e.g. "page 1 of 4: saved layout reused (light scan), 12 items, 281 ms", "new page, layout saved (full scan)", "icons moved, layout saved again", "no items found, dragon hidden", "boxes still moving, scanning again (2 of 4)", "stable after 2 scans", "page number not readable: dragon hidden". The scan lines are kept in memory only. "Saved pages" is a separate line.
+
+## v4.10 - icon finder in full mode only on the home screen, own app counts as "not home", new dragon timing
+- **Full mode only while home is on top.** In every other case (another app, the Home Dragon app itself, recents, the app vault, screen off or locked) the icon finder is in light mode: only window changes are delivered, no scroll or content events, no full node tree. It cannot be switched off completely from inside (only `disableSelf()` could, and you would have to turn it on again in Android's settings). The Log tab shows "Icon finder mode".
+- **Probe.** Light mode cannot reliably read the page bar. When a window change (or the hidden-dragon poll) shows the launcher as the top window while in light mode, the icon finder listens in full mode for 1 s and reads the page bar at 0.12 s, 0.4 s and 1 s. Home found: full mode stays. Not home (recents, app vault): back to light mode. Another app on top: no probe. A probe started by the poll happens at most once every 5 s.
+- **The Home Dragon app counts as "another app in front".** While the app is open: not home, light mode, dragon hidden, Phone Status hears "Don't run" (log reason "Home Dragon app open"). Opening and closing the app triggers a re-check at once.
+- **Timing.** Scan wait 0.5 s (was 0.3 s). The dragon appears 0.3 s after the first scan of a run has finished, and fades in over 0.3 s (was 0.4 s). Safety fade-in after 2.5 s if no scan arrives.
+- **Phone Status is not slowed down.** Run / Don't run never waits for a scan or for the dragon. Page changes are read from the page bar 0.15 s after the scroll stops (no scan wait), so leaving page 2 is sent about that fast; the scan still publishes at its end as a second check.

@@ -837,6 +837,7 @@ class MainActivity : Activity() {
             masterPreview?.stop()
             DragonService.appOpen = false
             DragonService.instance?.refreshHold()
+            IconRegistry.recheckNow?.invoke()              // the app no longer counts as "another app in front": look at the screen again
         } catch (_: Throwable) {
         }
         super.onPause()
@@ -870,6 +871,7 @@ class MainActivity : Activity() {
         })
         DragonService.appOpen = true
         DragonService.instance?.refreshHold()
+        IconRegistry.recheckNow?.invoke()                  // the Home Dragon app counts as another app: not home, light mode, Phone Status hears "Don't run"
         try { if (!logTab) { masterPreview?.reloadFlame(); masterPreview?.reloadIcons() } } catch (_: Throwable) {}
         // the icon finder was switched on in Android's settings before the user agreed here: show the disclosure now
         if (intent?.getBooleanExtra("a11y_disclosure", false) == true) {
