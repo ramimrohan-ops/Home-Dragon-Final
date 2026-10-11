@@ -35,10 +35,10 @@ private const val TAU = (2.0 * PI).toFloat()
 private const val SCAN_WAIT_MAX_MS = 2500L
 
 /** The dragon appears this long after the FIRST scan of a run has finished (later "stable" check scans do not restart it). */
-private const val APPEAR_AFTER_SCAN_MS = 300L
+private const val APPEAR_AFTER_SCAN_MS = 400L
 
 /** Fade-in time of every appearance (eased in onDraw). */
-private const val FADE_IN_S = 0.3f
+private const val FADE_IN_S = 0.4f
 private fun rnd(a: Float, b: Float) = a + Random.nextFloat() * (b - a)
 private fun clampF(v: Float, a: Float, b: Float) = max(a, min(b, v))
 private fun lerp3(a: Float, b: Float, t: Float) = a + (b - a) * t
@@ -335,7 +335,7 @@ class DragonView(context: Context) : View(context) {
     private var fadeGoal = 1f
     private var swipeState = 0       // 0 idle, 1 swiping, 2 stopped moving: waiting for the scan of the new page (see onScanDone)
     private var swipeLast = 0L       // the last moment the screen was moving (uptime ms)
-    private var appearAt = 0L        // uptime ms when the dragon may fade in (first scan done + 0.3 s); 0 = no scan has finished yet
+    private var appearAt = 0L        // uptime ms when the dragon may fade in (first scan done + 0.4 s); 0 = no scan has finished yet
 
     private var hiddenByApp = false
     private var hiddenNotified = false
@@ -348,7 +348,7 @@ class DragonView(context: Context) : View(context) {
         hiddenByApp = !shown
         hiddenNotified = false
         if (shown) {
-            // back on the home screen: wait for the first scan (0.5 s of quiet), take its icon layout, wait 0.3 s more, then fade in (see applyIcons, onScanDone)
+            // back on the home screen: wait for the first scan (0.5 s of quiet), take its icon layout, wait 0.4 s more, then fade in (see applyIcons, onScanDone)
             swipeState = 2; swipeLast = SystemClock.uptimeMillis(); fadeGoal = 0f; appearAt = 0L
         } else {
             appearAt = 0L
@@ -939,7 +939,7 @@ class DragonView(context: Context) : View(context) {
         else if (swipeState == 2 && appearAt != 0L && now >= appearAt) { swipeState = 0; appearAt = 0L; fadeGoal = 1f }
         else if (swipeState == 2 && now - swipeLast >= SCAN_WAIT_MAX_MS) { swipeState = 0; appearAt = 0L; fadeGoal = 1f }      // safety: the scan never came
         val fadeTarget = if (hiddenByApp) 0f else fadeGoal
-        // No fade-out: the dragon just disappears. Fade-in: FADE_IN_S (0.3 s), eased in onDraw.
+        // No fade-out: the dragon just disappears. Fade-in: FADE_IN_S (0.4 s), eased in onDraw.
         fade = if (fadeTarget < fade) fadeTarget else clampF(fade + rdt / FADE_IN_S, 0f, fadeTarget)
         if (hiddenByApp && fade <= 0.01f && !hiddenNotified) { hiddenNotified = true; post { onFullyHidden?.invoke() } }
         if (icons.isEmpty()) return

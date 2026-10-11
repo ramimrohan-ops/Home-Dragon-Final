@@ -43,8 +43,7 @@ object IconRegistry {
     @Volatile var idle: Boolean = false                // screen off or locked: set by the dragon service, the icon finder then runs in light mode
     @Volatile var light: Boolean = false               // the icon finder is in light mode (window changes only), shown in the health card
     var modeChanged: (() -> Unit)? = null               // asks the icon finder to pick light or full mode again (may be called from any thread)
-    var recheck: (() -> Unit)? = null                   // asks the icon finder to look again at what is in front (the hidden-dragon poll: probes at most every 5 s)
-    var recheckNow: (() -> Unit)? = null                // same, but not a poll (the Home Dragon app opened or closed): a probe may start at once
+    var recheckNow: (() -> Unit)? = null                // asks the icon finder to read the page bar once, 0.4 s from now (the Home Dragon app opened or closed)
 }
 
 /** Flame colours: up to 6, from the hot core to the cooled tip. The default is the Fire palette; the original blue flame is still one of the palettes. */

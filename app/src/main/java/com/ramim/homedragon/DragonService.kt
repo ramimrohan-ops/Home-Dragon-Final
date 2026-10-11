@@ -66,30 +66,6 @@ class DragonService : Service() {
             if (!screenActive && SystemClock.elapsedRealtime() < pollUntil) handler.postDelayed(this, 400)
         }
     }
-    // Safety net for a hidden dragon: while the phone is awake and unlocked, the app is not open and the home screen is judged "not in front",
-    // ask the icon finder to look again every second for 20 s after the last window change, then every 5 s. It stops by itself
-    // when the dragon is shown, the screen goes off or the app opens.
-    private var hiddenPollOn = false
-    private var hiddenSince = 0L
-    fun resetHiddenBackoff() { hiddenSince = SystemClock.elapsedRealtime() }
-    private val hiddenPoll = object : Runnable {
-        override fun run() {
-            if (view == null || appOpen || !screenActive || !IconRegistry.serviceActive || IconRegistry.onHome || !pm.isInteractive) {
-                hiddenPollOn = false
-                return
-            }
-            IconRegistry.recheck?.invoke()
-            val age = SystemClock.elapsedRealtime() - hiddenSince
-            handler.postDelayed(this, if (age < 20_000) 1000L else 5000L)
-        }
-    }
-    private fun startHiddenPoll() {
-        if (hiddenPollOn) return
-        hiddenPollOn = true
-        hiddenSince = SystemClock.elapsedRealtime()
-        handler.postDelayed(hiddenPoll, 1000)
-    }
-
     private fun startUnlockPoll() {
         pollUntil = SystemClock.elapsedRealtime() + 120_000
         handler.removeCallbacks(unlockPoll)
@@ -229,7 +205,6 @@ class DragonService : Service() {
             v.setShown(true)
         } else {
             v.setShown(false)                      // fades out, then onFullyHidden pauses the loop
-            startHiddenPoll()
         }
     }
 
@@ -248,8 +223,6 @@ class DragonService : Service() {
 
     override fun onDestroy() {
         handler.removeCallbacks(unlockPoll)
-        handler.removeCallbacks(hiddenPoll)
-        hiddenPollOn = false
         setIdle(false)
         // Prefs.enabled is only switched off by the Stop button, so "still on" here means Android stopped the service.
         Diag.log(this, if (Prefs.enabled(this)) "Dragon service stopped by the system" else "Dragon service stopped by you")

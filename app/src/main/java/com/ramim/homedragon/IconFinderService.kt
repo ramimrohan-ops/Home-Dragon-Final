@@ -23,21 +23,14 @@ import kotlin.math.min
 /** How long the screen must stay still (no swipe, scroll or window change) before icon positions are read. Every scan waits this long. */
 private const val SETTLE_MS = 500L
 
-/** After a scroll stops, the page number is read this much later (no scan wait), so Phone Status hears about a page change quickly. */
-private const val PAGE_READ_MS = 150L
+/** The page bar is read once, this long after the last window change, swipe or scroll, screen on / unlock, or Home Dragon app open / close. */
+private const val BAR_READ_MS = 400L
 
-/** Light mode cannot read the page bar reliably. When the launcher shows up on top, the icon finder listens in full mode for this long, then goes back. */
-private const val PROBE_MS = 1000L
-
-/** Probes started by the hidden-dragon poll (not by a window change) are at least this far apart. */
-private const val POLL_PROBE_GAP_MS = 5000L
-
-private const val PROBE_NONE = 0
-private const val PROBE_EVENT = 1
-private const val PROBE_POLL = 2
+/** A Run / Don't run change is held this long before it is sent; if the state is back to the last sent one by then, nothing is sent. */
+private const val SEND_HOLD_MS = 400L
 
 /** After a scan the screen is read once more this much later; while the boxes keep moving (an animation is still running) it is read again. */
-private const val VERIFY_MS = 300L
+private const val VERIFY_MS = 400L
 
 /** At most this many extra reads after the first one (so up to 4 scans in a row). */
 private const val VERIFY_MAX = 3
@@ -47,7 +40,8 @@ private const val VERIFY_MAX = 3
  * clickable and labelled) and the two numbers of the page bar. It never reads or stores text.
  *
  * The home screen counts as "on top" only when the launcher is the top application window AND its page bar with the two page
- * numbers can be read. Without the page number the dragon is hidden and Phone Status hears "don't run".
+ * numbers is VISIBLE to the user. No visible bar: nothing is scanned, the dragon is hidden and Phone Status hears "don't run".
+ * The page bar is read once, 0.4 s after a window change, swipe, screen on or Home Dragon app open / close. There is no polling.
  */
 class IconFinderService : AccessibilityService() {
 
@@ -77,12 +71,11 @@ class IconFinderService : AccessibilityService() {
         IconRegistry.serviceActive = true
         IconRegistry.onHome = false                      // proven below (launcher on top and its page number readable), never assumed
         IconRegistry.page = 0; IconRegistry.pages = 0; IconRegistry.noItems = false
-        IconRegistry.recheck = { handler.post { recheckHome(PROBE_POLL) } }
-        IconRegistry.recheckNow = { handler.post { recheckHome(PROBE_EVENT) } }
+        IconRegistry.recheckNow = { handler.post { scheduleBarRead() } }
         Diag.log(this, "Icon finder connected")
         light = false                                    // Android starts a connected service in full mode
         IconRegistry.light = false
-        IconRegistry.modeChanged = { handler.post { updateMode(); if (!IconRegistry.idle) recheckHome(PROBE_EVENT) } }
+        IconRegistry.modeChanged = { handler.post { updateMode(); if (!IconRegistry.idle) scheduleBarRead() } }
         KeepAlive.ensureDragon(this, "icon finder connected")
         IconRegistry.listener?.invoke()
         if (!signalReceiverOn) {
@@ -108,8 +101,8 @@ class IconFinderService : AccessibilityService() {
     }
 
     // ---- Phone Status link: "Run" (home screen on top, page 2, phone unlocked, screen on, no keyboard, no shade) or "don't run" ----
-    // The state is sent once, when it changes. Phone Status answers "received"; without that answer it is sent again
-    // after 1 s, 2 s and 4 s, then given up (Phone Status asks for the state itself when it starts).
+    // A change is held 0.4 s, then sent once. Phone Status answers "received"; without that answer it is sent again
+    // once, after 1 s, then given up (Phone Status asks for the state itself when it starts or wakes).
 
     private val powerMgr by lazy { getSystemService(Context.POWER_SERVICE) as PowerManager }
     private val keyguardMgr by lazy { getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager }
@@ -120,9 +113,7 @@ class IconFinderService : AccessibilityService() {
     private var pendingRun = false
     private var pendingWhy = ""
     private var tries = 0
-    private val waits = longArrayOf(1000, 2000, 4000, 4000)
-    private val publishRun1 = Runnable { publishRun() }
-    private val publishRun2 = Runnable { publishRun() }
+    private val waits = longArrayOf(1000, 1000)     // first send, one resend after 1 s, then given up after 1 more second
     private val resendRun = Runnable { resendPending() }
 
     private val signalReceiver = object : BroadcastReceiver() {
@@ -135,17 +126,10 @@ class IconFinderService : AccessibilityService() {
                 }
                 else -> {                                   // screen on / off / unlocked
                     publishRun()
-                    queuePublish()                          // look again once the change has settled
+                    scheduleBarRead()                       // the page bar is read once, 0.4 s later
                 }
             }
         }
-    }
-
-    /** Re-check shortly after a window change (0.15 s) and again when it has settled (0.7 s). */
-    private fun queuePublish() {
-        handler.removeCallbacks(publishRun1); handler.removeCallbacks(publishRun2)
-        handler.postDelayed(publishRun1, 150)
-        handler.postDelayed(publishRun2, 700)
     }
 
     /**
@@ -178,13 +162,8 @@ class IconFinderService : AccessibilityService() {
         return true to "home on top"
     }
 
-    /**
-     * Sends "Run" (strict home AND the page bar names [HomeSignal.RUN_PAGE]) or "don't run" (anything else) when it differs
-     * from the last one sent, or always when [force] is true (Phone Status asked for the state, or confirmed a different one),
-     * then waits for the confirmation. Swiping between other pages sends nothing: it stays "don't run".
-     */
-    private fun publishRun(force: Boolean = false) {
-        if (!IconRegistry.serviceActive) return
+    /** Run or not, with the reason: strict home AND the page bar names [HomeSignal.RUN_PAGE]. */
+    private fun currentRun(): Pair<Boolean, String> {
         val (home, why) = strictHome()
         val page = IconRegistry.page
         val pages = IconRegistry.pages
@@ -194,7 +173,31 @@ class IconFinderService : AccessibilityService() {
             run -> "home, page $page of $pages"
             else -> "home, page $page of $pages (Phone Status runs on page ${HomeSignal.RUN_PAGE})"
         }
-        if (!force && run == sentRun) return
+        return run to reason
+    }
+
+    private var holdPending = false
+    private val holdSend = Runnable {
+        holdPending = false
+        val (run, reason) = currentRun()
+        if (run != sentRun) sendRun(run, reason)           // if it flipped back during the hold, nothing is sent
+    }
+
+    /**
+     * Run (strict home AND the page bar names [HomeSignal.RUN_PAGE]) or "don't run" (anything else). A change is held [SEND_HOLD_MS], then
+     * sent if it still differs from the last one sent. [force] sends the current state at once (Phone Status asked for it, or confirmed a
+     * different one). Swiping between other pages sends nothing: it stays "don't run".
+     */
+    private fun publishRun(force: Boolean = false) {
+        if (!IconRegistry.serviceActive) return
+        if (force) { val (run, reason) = currentRun(); sendRun(run, reason); return }
+        if (holdPending) return
+        if (currentRun().first == sentRun) return
+        holdPending = true
+        handler.postDelayed(holdSend, SEND_HOLD_MS)
+    }
+
+    private fun sendRun(run: Boolean, reason: String) {
         sentRun = run
         seq++
         pendingSeq = seq; pendingRun = run; pendingWhy = reason; tries = 0
@@ -230,7 +233,7 @@ class IconFinderService : AccessibilityService() {
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
-        handler.removeCallbacks(resendRun); handler.removeCallbacks(publishRun1); handler.removeCallbacks(publishRun2)
+        handler.removeCallbacks(resendRun); handler.removeCallbacks(holdSend); holdPending = false
         handler.removeCallbacks(settleScan)
         layouts.clear()
         seq++
@@ -244,10 +247,8 @@ class IconFinderService : AccessibilityService() {
         Diag.log(this, "Icon finder disconnected")
         IconRegistry.modeChanged = null
         IconRegistry.light = false
-        handler.removeCallbacks(rc1); handler.removeCallbacks(rc2)
-        handler.removeCallbacks(probeRead1); handler.removeCallbacks(probeRead2); handler.removeCallbacks(endProbe); handler.removeCallbacks(pageCheck)
-        probeUntil = 0L
-        IconRegistry.recheck = null; IconRegistry.recheckNow = null
+        handler.removeCallbacks(barRead)
+        IconRegistry.recheckNow = null
         IconRegistry.serviceActive = false
         IconRegistry.icons = emptyList()
         IconRegistry.page = 0; IconRegistry.pages = 0; IconRegistry.noItems = false
@@ -278,35 +279,55 @@ class IconFinderService : AccessibilityService() {
         return null
     }
 
-    private class Check(val home: Boolean, val page: Int, val pages: Int)
+    private class Check(val home: Boolean, val page: Int, val pages: Int, val info: String = "")
+
+    /** What one read of the launcher's screen found: the page bar that is visible to the user (if any), and whether HyperOS Recents is on screen. */
+    private class Screen(val bar: IntArray?, val barInfo: String, val recents: Boolean)
 
     /**
-     * Is the home screen what the user is looking at? Yes when the top application window is the launcher AND the page bar with its
-     * two numbers can be read in that same window; the check then also gives the page. No for any other app, for a window that cannot
-     * be read, and for the launcher without a readable page number (recents, an app vault, a screen still being drawn).
+     * Is the home screen what the user is looking at? Yes when the top application window is the launcher AND its page bar (two numbers,
+     * "Page 2 of 4 pages") is visible to the user in that same window; the check then also gives the page. No for the Home Dragon app, any
+     * other app, a window that cannot be read, and the launcher without a visible bar (Recents keeps its bars in the tree but not visible).
      * Returns null when the window list is unavailable: nothing is guessed then, the last answer stays.
      */
     private fun homeFromWindows(): Check? {
         val launcher = IconRegistry.launcherPkg ?: return null
-        if (DragonService.appOpen) {                     // the Home Dragon app itself is in front: that is "another app", not home
-            launcherTop = false; notHomeWhy = "Home Dragon app open"
-            return Check(false, 0, 0)
-        }
+        if (DragonService.appOpen) { notHomeWhy = "Home Dragon app open"; return Check(false, 0, 0) }
         val f = front() ?: return null
-        launcherTop = f.pkg == launcher
         if (f.pkg == null) { notHomeWhy = "window in front cannot be read"; return Check(false, 0, 0) }
         if (f.pkg != launcher) { notHomeWhy = "another app in front"; return Check(false, 0, 0) }
-        val bar = findBar(f.root, 0)
-        if (bar == null) { notHomeWhy = "page number not readable (recents, app vault or screen still drawing)"; return Check(false, 0, 0) }
-        return Check(true, bar[0], bar[1])
+        val s = readScreen(f.root)
+        if (s.recents) { notHomeWhy = "Recents on screen (Clear all button)"; return Check(false, 0, 0) }
+        val bar = s.bar
+        if (bar == null) { notHomeWhy = "no visible page bar (Recents, app vault or screen still drawing)"; return Check(false, 0, 0) }
+        return Check(true, bar[0], bar[1], s.barInfo)
     }
 
-    /** The page bar: the SeekBar whose label holds two numbers ("Page 2 of 5 pages"). Found by its type and the two numbers, not by words. */
-    private fun findBar(n: AccessibilityNodeInfo?, depth: Int): IntArray? {
-        if (n == null || depth > 14) return null
-        pageBar(n)?.let { return it }
-        for (i in 0 until n.childCount) findBar(n.getChild(i), depth + 1)?.let { return it }
-        return null
+    /**
+     * Looks for the page bar: the SeekBar whose label holds two numbers, found by type and numbers, not by words, and counted only when
+     * Android says it is visible to the user (transparency and covering included). Stops at the first such bar. Also notes the HyperOS
+     * Recents "Clear all" container (by view id) when it is seen first: Recents is never home. Reads no text, only the two numbers.
+     */
+    private fun readScreen(root: AccessibilityNodeInfo?): Screen {
+        var bar: IntArray? = null
+        var info = ""
+        var recents = false
+        val r = Rect()
+        fun walk(n: AccessibilityNodeInfo?, depth: Int) {
+            if (n == null || depth > 14 || bar != null || recents) return
+            val id = n.viewIdResourceName
+            if (id != null && (id.contains("clearAnimView") || id.contains("memoryAndClear")) && n.isVisibleToUser) { recents = true; return }
+            val b = pageBar(n)
+            if (b != null && n.isVisibleToUser) {
+                bar = b
+                n.getBoundsInScreen(r)
+                info = "page bar " + b[0] + " of " + b[1] + ", visible, bounds " + r.flattenToString()
+                return
+            }
+            for (i in 0 until n.childCount) walk(n.getChild(i), depth + 1)
+        }
+        try { walk(root, 0) } catch (_: Exception) {}
+        return Screen(bar, info, recents)
     }
 
     /** [page, pages] when this node is the page bar, else null. Any script's digits count. */
@@ -329,12 +350,11 @@ class IconFinderService : AccessibilityService() {
     private fun whyNow(): String = if (IconRegistry.onHome) "home screen in front (page number read)" else notHomeWhy
 
     /**
-     * Look again at what is in front. Called after every window change (0.4 s and 0.8 s later, when the transition is over), by the
-     * hidden-dragon poll, and when a scan cannot read the page number: the launcher can become readable (for example after unlock) or
-     * stop being the home screen (recents) without any further event.
+     * Reads the page bar once and applies the answer. Called 0.4 s after a window change, swipe or scroll, screen on / unlock, and when the
+     * Home Dragon app opens or closes. There are no repeat reads and no polling.
      * With usage access on, an app in front comes straight from Android, even when its window cannot be read.
      */
-    private fun recheckHome(probe: Int = PROBE_NONE) {
+    private fun recheckHome() {
         if (!IconRegistry.serviceActive) return
         val launcher = IconRegistry.launcherPkg ?: return
         val top = Foreground.current(this)
@@ -343,7 +363,6 @@ class IconFinderService : AccessibilityService() {
             val active = try { rootInActiveWindow?.packageName?.toString() } catch (e: Exception) { null }
             if (active != launcher) {
                 notHomeWhy = "another app in front (usage access)"
-                launcherTop = false
                 leaveHome()
                 updateMode()
                 return
@@ -351,45 +370,36 @@ class IconFinderService : AccessibilityService() {
         }
         homeFromWindows()?.let { applyCheck(it) }
         updateMode()
-        if (probe != PROBE_NONE) maybeProbe(probe == PROBE_POLL)
     }
 
-    private val rc1 = Runnable { recheckHome() }
-    private val rc2 = Runnable { recheckHome() }
+    private val barRead = Runnable { recheckHome() }
 
-    /** After every window change: look again 0.4 and 0.8 s later, when the transition is over (also while home, to catch recents). */
-    private fun scheduleRechecks() {
-        handler.removeCallbacks(rc1); handler.removeCallbacks(rc2)
-        handler.postDelayed(rc1, 400); handler.postDelayed(rc2, 800)
+    /** One page-bar read in [BAR_READ_MS]; every new trigger restarts the wait. */
+    private fun scheduleBarRead() {
+        handler.removeCallbacks(barRead)
+        handler.postDelayed(barRead, BAR_READ_MS)
     }
 
     private var light = false               // light mode: only window changes are delivered (see updateMode)
-    private var launcherTop = false         // the launcher window is the top application window (home, app drawer, recents or app vault)
-    private var probeUntil = 0L             // full mode is kept until this time (elapsedRealtime) while a probe runs
-    private var lastProbeAt = 0L
 
     /**
-     * Full mode only while the home screen is on top (page bar proven). Everywhere else (another app, the Home Dragon app, recents, an
-     * app vault, screen off or locked) it is light mode: Android then only reports window changes, not every content change and scroll,
-     * and does not build the full node tree. Light mode cannot reliably read the page bar, so a probe (see [maybeProbe]) switches to full
-     * mode for a moment whenever the launcher shows up on top. (Switching the service off completely is not possible from inside it.)
+     * Full mode only while the home screen is on top. Everywhere else (another app, the Home Dragon app, Recents, an app vault, screen
+     * off or locked) it is light mode: Android then only reports window changes, not every scroll. The node flags are the same in both
+     * modes, so the page bar can be read in light mode too. (Switching the service off completely is not possible from inside it.)
      */
     private fun updateMode() {
-        val probing = SystemClock.elapsedRealtime() < probeUntil
-        val want = IconRegistry.idle || (!IconRegistry.onHome && !probing)
+        val want = IconRegistry.idle || !IconRegistry.onHome
         if (want == light) return
         try {
             val info = getServiceInfo() ?: return
-            if (want) {
-                info.eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or AccessibilityEvent.TYPE_WINDOWS_CHANGED
-                info.flags = AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+            info.eventTypes = if (want) {
+                AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or AccessibilityEvent.TYPE_WINDOWS_CHANGED
             } else {
                 // No content-changed events: a widget redrawing every second must not wake the icon finder.
-                info.eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
-                    AccessibilityEvent.TYPE_VIEW_SCROLLED or AccessibilityEvent.TYPE_WINDOWS_CHANGED
-                info.flags = AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS or
-                    AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
+                AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or AccessibilityEvent.TYPE_VIEW_SCROLLED or AccessibilityEvent.TYPE_WINDOWS_CHANGED
             }
+            info.flags = AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS or
+                AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
             setServiceInfo(info)
             light = want
             IconRegistry.light = want
@@ -397,35 +407,12 @@ class IconFinderService : AccessibilityService() {
         }
     }
 
-    /** The window check's answer: home (with its page) comes on at once, no settle time; "not home" acts at once too. */
-    private val probeRead1 = Runnable { recheckHome() }
-    private val probeRead2 = Runnable { recheckHome() }
-    private val endProbe = Runnable { probeUntil = 0L; recheckHome() }          // last read still in full mode, then back to light
-    private val pageCheck = Runnable {
-        if (!IconRegistry.onHome) return@Runnable
-        val c = homeFromWindows()
-        if (c != null && c.home) applyCheck(c)           // only the page may change here; leaving home is decided by the window events
-    }
-
-    /**
-     * The launcher is the top window but the page bar was not read (light mode cannot): listen in full mode for [PROBE_MS], reading the
-     * page bar at 0.12 s, 0.4 s and at the end. Home found: full mode stays. Not home (recents, app vault, drawer): back to light mode.
-     * Another app on top: no probe at all.
-     */
-    private fun maybeProbe(poll: Boolean) {
-        if (!light || IconRegistry.idle || IconRegistry.onHome || !launcherTop) return
-        val now = SystemClock.elapsedRealtime()
-        if (poll && now - lastProbeAt < POLL_PROBE_GAP_MS) return
-        lastProbeAt = now
-        probeUntil = now + PROBE_MS
-        updateMode()                                     // full mode
-        handler.removeCallbacks(probeRead1); handler.removeCallbacks(probeRead2); handler.removeCallbacks(endProbe)
-        handler.postDelayed(probeRead1, 120); handler.postDelayed(probeRead2, 400); handler.postDelayed(endProbe, PROBE_MS)
-    }
-
+    /** The window check's answer: home (with its page) is shown; "not home" acts at once. */
+    private var barInfo = ""
     private fun applyCheck(c: Check) {
         if (!c.home) { leaveHome(); return }
         IconRegistry.page = c.page; IconRegistry.pages = c.pages
+        barInfo = c.info
         if (!IconRegistry.onHome) enterHome() else publishRun()      // already home: the page may have changed
     }
 
@@ -435,7 +422,7 @@ class IconFinderService : AccessibilityService() {
         IconRegistry.homeWhy = whyNow()
         IconRegistry.listener?.invoke()                 // the dragon shows now (it fades in once the first scan has placed it)
         updateMode()
-        Diag.log(this, "Home found: page ${IconRegistry.page} of ${IconRegistry.pages}")
+        Diag.log(this, "Home found: $barInfo")
         scanSoon()
         publishRun()
     }
@@ -460,40 +447,43 @@ class IconFinderService : AccessibilityService() {
         KeepAlive.ensureDragon(this, "screen change")    // dragon service gone while it should be on: start it again (cheap check, throttled)
         val launcher = IconRegistry.launcherPkg ?: return
         val type = event.eventType
-        if (type == AccessibilityEvent.TYPE_WINDOWS_CHANGED || type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) queuePublish()
 
         // Window list changes carry no package name, so they are handled first.
-        if (type == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
-            homeFromWindows()?.let { applyCheck(it) }
-            updateMode()
-            maybeProbe(false)
-            DragonService.instance?.resetHiddenBackoff()
-            scheduleRechecks()                           // every window change, also while home: recents has no event of its own once the bar is gone
-            return
-        }
+        if (type == AccessibilityEvent.TYPE_WINDOWS_CHANGED) { onWindowChange(launcher); return }
         val pkg = event.packageName?.toString() ?: return
 
         if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             // Ignore system overlays that do not change what the user is looking at.
             if (pkg == "com.android.systemui" || pkg == packageName) return
-            homeFromWindows()?.let { applyCheck(it) }       // no window list: nothing is guessed, the last answer stays
-            updateMode()
-            maybeProbe(false)
-            DragonService.instance?.resetHiddenBackoff()
-            scheduleRechecks()
+            onWindowChange(launcher)
         }
-        if (event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED && pkg == launcher) {
+        if (type == AccessibilityEvent.TYPE_VIEW_SCROLLED && pkg == launcher) {
             val dx = event.scrollDeltaX; val dy = event.scrollDeltaY
             val horizontal = if (dx != 0 || dy != 0) abs(dx) >= 2 && abs(dx) > abs(dy)
             else event.maxScrollX > 0 && event.scrollX != lastScrollX
             lastScrollX = event.scrollX
             if (horizontal) IconRegistry.swipeListener?.invoke()
             scanSoon()                                       // any swipe or scroll (pages, app drawer): scan after 0.5 s without further scrolling
-            handler.removeCallbacks(pageCheck); handler.postDelayed(pageCheck, PAGE_READ_MS)   // the page number is read sooner (Phone Status), no scan wait
+            scheduleBarRead()                                // the page bar is read once, 0.4 s after the scroll stops (Phone Status hears about a page change)
             return
         }
         // The launcher window itself changed (home came to front, drawer or folder opened or closed): scan.
         if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && pkg == launcher) scanSoon()
+    }
+
+    /**
+     * A window changed. Another app (or the Home Dragon app) in front is known from the window list at once: not home, no waiting.
+     * The launcher in front needs its page bar read: once, 0.4 s after the last change.
+     */
+    private fun onWindowChange(launcher: String) {
+        if (DragonService.appOpen) { notHomeWhy = "Home Dragon app open"; leaveHome(); return }
+        val f = front()
+        if (f != null && f.pkg != launcher) {
+            notHomeWhy = if (f.pkg == null) "window in front cannot be read" else "another app in front"
+            leaveHome()
+            return
+        }
+        scheduleBarRead()
     }
 
     // ---- scanning: wait for quiet, scan, then look once more until two reads in a row agree ----
@@ -553,6 +543,17 @@ class IconFinderService : AccessibilityService() {
         if (root.packageName?.toString() != IconRegistry.launcherPkg) return null
 
         val t0 = SystemClock.elapsedRealtime()
+
+        // The page bar first. No visible bar (or Recents on screen): the screen is not read at all, nothing is saved, the dragon hides.
+        val s0 = readScreen(root)
+        val bar0 = s0.bar
+        if (s0.recents || bar0 == null) {
+            notHomeWhy = if (s0.recents) "Recents on screen (Clear all button)" else "no visible page bar (scan)"
+            IconRegistry.noteScan((if (s0.recents) "Recents on screen" else "no page bar") + ": scan skipped, dragon hidden, Phone Status told \"don't run\", " +
+                (SystemClock.elapsedRealtime() - t0) + " ms")
+            leaveHome()
+            return null
+        }
         val d = resources.displayMetrics
         val key = "${d.widthPixels}x${d.heightPixels}@${d.densityDpi}"
         if (key != layoutsKey) { layouts.clear(); layoutsKey = key }
@@ -563,17 +564,17 @@ class IconFinderService : AccessibilityService() {
         val found = ArrayList<RectF>()
         val seen = HashSet<Long>()
         val b = Rect()
-        var bar: IntArray? = null
 
         fun walk(n: AccessibilityNodeInfo?, depth: Int) {
             if (n == null || depth > 14) return
-            if (bar == null) bar = pageBar(n)
             val cls = n.className?.toString() ?: ""
             val isWidget = cls.contains("WidgetHostView")
             val labelled = !n.text.isNullOrEmpty() || !n.contentDescription.isNullOrEmpty()
             // One UI Home and others expose icons as BubbleTextView / IconView nodes that are not always flagged clickable.
             val iconClass = cls.contains("BubbleTextView") || cls.contains("IconView") || cls.contains("AppIcon")
-            val isIconNode = (n.isClickable || n.isLongClickable || iconClass) && labelled
+            val vid = n.viewIdResourceName ?: ""
+            val skipId = vid.contains("clear", true) || vid.contains("dismiss", true)       // Recents "Clear all" and similar buttons are not app icons
+            val isIconNode = !skipId && (n.isClickable || n.isLongClickable || iconClass) && labelled
             if (n.isVisibleToUser && (isWidget || isIconNode)) {
                 n.getBoundsInScreen(b)
                 val w = b.width().toFloat()
@@ -606,16 +607,7 @@ class IconFinderService : AccessibilityService() {
         try { walk(root, 0) } catch (e: Exception) { return null }
 
         val ms = SystemClock.elapsedRealtime() - t0
-        val barNow = bar
-        if (barNow == null) {
-            // No page number: the home screen is not proven, so nothing is shown. Looked at again shortly (it may only be a screen being drawn).
-            notHomeWhy = "page number not readable (scan)"
-            IconRegistry.noteScan("page number not readable: dragon hidden, Phone Status told \"don't run\", $ms ms")
-            leaveHome()
-            updateMode()
-            scheduleRechecks()
-            return null
-        }
+        val barNow: IntArray = bar0
         val page = barNow[0]
         val pages = barNow[1]
         IconRegistry.page = page; IconRegistry.pages = pages
