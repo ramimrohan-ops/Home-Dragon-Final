@@ -22,7 +22,24 @@ object IconRegistry {
     @Volatile var homeWhy: String = ""                 // why the home screen was last judged hidden (for the health log)
     @Volatile var page: Int = 0                        // home screen page the page bar names (0 = no bar seen), set by the icon finder after each settled scan
     @Volatile var pages: Int = 0                       // number of home screen pages the page bar names
-    @Volatile var scanNote: String = ""                // the last scan in words, for the health log (page, saved or full, items, time)
+    @Volatile var noItems: Boolean = false             // the last scan found nothing on the page: the dragon is hidden (not paused)
+    @Volatile var scanSaved: String = "none"           // the pages whose layout is saved, e.g. "1,2,3,4" (health log)
+    var scanDone: (() -> Unit)? = null                  // called after every scan that read a page number (main thread): the dragon may fade in
+
+    private val scanLog = ArrayDeque<String>()          // the last scans in words, oldest first (in memory only, not saved to disk)
+    private const val SCAN_LOG_MAX = 8
+
+    /** Adds one line about a scan to the health log (time, then what happened). Main thread. */
+    @Synchronized
+    fun noteScan(line: String) {
+        val t = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date())
+        scanLog.addLast("$t  $line")
+        while (scanLog.size > SCAN_LOG_MAX) scanLog.removeFirst()
+    }
+
+    /** The last scans, newest first. */
+    @Synchronized
+    fun scanLines(): List<String> = scanLog.reversed()
     @Volatile var idle: Boolean = false                // screen off or locked: set by the dragon service, the icon finder then runs in light mode
     @Volatile var light: Boolean = false               // the icon finder is in light mode (window changes only), shown in the health card
     var modeChanged: (() -> Unit)? = null               // asks the icon finder to pick light or full mode again (may be called from any thread)

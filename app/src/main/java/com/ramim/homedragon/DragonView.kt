@@ -31,8 +31,8 @@ import kotlin.random.Random
 
 private const val TAU = (2.0 * PI).toFloat()
 
-/** The dragon fades back in this long after the screen stopped moving (the icon scan runs earlier, after 0.5 s, while it is still hidden). */
-private const val APPEAR_MS = 1000L
+/** Safety only: if the scan that the dragon waits for after a swipe or a return home never arrives, it fades back in after this long anyway. */
+private const val SCAN_WAIT_MAX_MS = 2000L
 private fun rnd(a: Float, b: Float) = a + Random.nextFloat() * (b - a)
 private fun clampF(v: Float, a: Float, b: Float) = max(a, min(b, v))
 private fun lerp3(a: Float, b: Float, t: Float) = a + (b - a) * t
@@ -327,7 +327,7 @@ class DragonView(context: Context) : View(context) {
     // ---------- page swipe fade ----------
     private var fade = 1f
     private var fadeGoal = 1f
-    private var swipeState = 0       // 0 idle, 1 swiping, 2 stopped moving: waiting for the new page's icons and for the 1 s to pass
+    private var swipeState = 0       // 0 idle, 1 swiping, 2 stopped moving: waiting for the scan of the new page (see onScanDone)
     private var swipeLast = 0L       // the last moment the screen was moving (uptime ms)
 
     private var hiddenByApp = false
@@ -341,9 +341,14 @@ class DragonView(context: Context) : View(context) {
         hiddenByApp = !shown
         hiddenNotified = false
         if (shown) {
-            // back on the home screen (the 1 s of stillness has already passed): take the fresh icon layout, then fade in (see applyIcons)
-            swipeState = 2; swipeLast = SystemClock.uptimeMillis() - APPEAR_MS; fadeGoal = 0f
+            // back on the home screen: wait for the first scan (about 0.3 s of quiet), take its icon layout, then fade in (see applyIcons, onScanDone)
+            swipeState = 2; swipeLast = SystemClock.uptimeMillis(); fadeGoal = 0f
         }
+    }
+
+    /** The icon finder has finished a scan: if the dragon was waiting for it (after a swipe or a return home) it fades in now, with no further delay. */
+    fun onScanDone() {
+        if (swipeState == 2) { swipeState = 0; fadeGoal = 1f }
     }
 
     /** The launcher is scrolling sideways: fade out fast. */
@@ -579,7 +584,7 @@ class DragonView(context: Context) : View(context) {
                 abs(sorted[it].left - icons[it].r.left) < 1.5f && abs(sorted[it].top - icons[it].r.top) < 1.5f
             }
         ) {
-            return                                             // same page again: it fades back in where it was, once the 1 s is over
+            return                                             // same page again: it fades back in where it was, as soon as the scan is done (onScanDone)
         }
 
         val avg = medianWidth(rects.map { it.width() })
@@ -921,7 +926,7 @@ class DragonView(context: Context) : View(context) {
     private fun step(rdt: Float) {
         val now = SystemClock.uptimeMillis()
         if (swipeState == 1 && now - swipeLast > 120L) { swipeState = 2 }
-        else if (swipeState == 2 && now - swipeLast >= APPEAR_MS) { swipeState = 0; fadeGoal = 1f }      // the dragon appears 1 s after the screen stopped moving
+        else if (swipeState == 2 && now - swipeLast >= SCAN_WAIT_MAX_MS) { swipeState = 0; fadeGoal = 1f }      // safety: the scan never came
         val fadeTarget = if (hiddenByApp) 0f else fadeGoal
         // No fade-out: the dragon just disappears. Fade-in: 0.4 s, eased in onDraw.
         fade = if (fadeTarget < fade) fadeTarget else clampF(fade + rdt / 0.4f, 0f, fadeTarget)

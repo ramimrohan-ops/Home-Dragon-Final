@@ -156,12 +156,13 @@ class DragonService : Service() {
         }
 
         IconRegistry.listener = {
-            view?.setIcons(IconRegistry.icons)
+            if (!IconRegistry.noItems) view?.setIcons(IconRegistry.icons)     // nothing found on the page: the dragon is hidden, not moved to the grid
             apply()
         }
         IconRegistry.swipeListener = { view?.onSwipe() }
+        IconRegistry.scanDone = { view?.onScanDone() }
         v.onFullyHidden = {
-            if (IconRegistry.serviceActive && !IconRegistry.onHome && screenActive) {
+            if (IconRegistry.serviceActive && (!IconRegistry.onHome || IconRegistry.noItems) && screenActive) {
                 v.visibility = View.GONE
                 v.pause()
             }
@@ -221,7 +222,7 @@ class DragonService : Service() {
             v.pause()
             return
         }
-        val homeOk = !IconRegistry.serviceActive || IconRegistry.onHome
+        val homeOk = !IconRegistry.serviceActive || (IconRegistry.onHome && !IconRegistry.noItems)
         if (homeOk) {
             v.visibility = View.VISIBLE
             v.resume()
@@ -255,6 +256,7 @@ class DragonService : Service() {
         instance = null
         IconRegistry.listener = null
         IconRegistry.swipeListener = null
+        IconRegistry.scanDone = null
         try { unregisterReceiver(receiver) } catch (_: Exception) {}
         view?.let {
             it.pause()
