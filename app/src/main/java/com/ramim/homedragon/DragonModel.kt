@@ -594,7 +594,7 @@ class DragonModel {
         // mouth interior and lower jaw
         val open = mouth * 0.62f
         path.reset(); path.moveTo(2f, 4f); path.lineTo(36f, 3f); path.lineTo(34f + open * 5f, 4f + 28f * open); path.lineTo(2f - open * 2f, 4f + 14f * open); path.close()
-        fill.shader = null; fill.color = Color.parseColor("#4A0C14"); c.drawPath(path, fill)
+        fill.shader = null; fill.color = Color.parseColor("#4A0C14"); keepColour(true); c.drawPath(path, fill); keepColour(false)
 
         c.save(); c.translate(2f, 5f); c.rotate(deg(open))
         path.reset()
@@ -609,7 +609,7 @@ class DragonModel {
         stroke.color = Col.line; stroke.strokeWidth = 1f; c.drawPath(path, stroke)
         if (mouth > 0.06f) {
             path.reset(); path.moveTo(4f, -1f); path.cubicTo(12f, -4.5f, 24f, -3.5f, 32f, -1.2f); path.lineTo(4f, -1f); path.close()
-            fill.color = Color.parseColor("#E0606A"); c.drawPath(path, fill)
+            fill.color = Color.parseColor("#E0606A"); keepColour(true); c.drawPath(path, fill); keepColour(false)
             fill.color = Col.boneHi
             for (q in 0 until 6) tri(c, 11f + q * 4f, -0.8f, 13.5f + q * 4f, -0.8f, 12.4f + q * 4f, -4.4f, fill)
         }
@@ -640,10 +640,12 @@ class DragonModel {
         if (shut < 0.7f) {
             val ey = max(0.12f, s.eye) * (1f - shut / 0.7f) + 0.12f * (shut / 0.7f)
             c.save(); c.translate(14f, -6.2f); c.rotate(-17f)
+            keepColour(true)                                 // the eye keeps its own colours
             ell(c, 0f, 0f, 5.2f, 3.3f * ey + 0.4f, Color.argb(224, 30, 6, 6))
             if (eyeSh == null) eyeSh = RadialGradient(0.8f, 0f, 4.4f, intArrayOf(Color.parseColor("#FFE9A8"), Col.eye, Color.parseColor("#A8200C")), floatArrayOf(0f, 0.45f, 1f), Shader.TileMode.CLAMP)
             ellShader(c, 0f, 0f, 4.4f, 2.5f * ey + 0.2f, eyeSh!!)
             ell(c, 0.4f, 0f, 0.9f, 2.3f * ey + 0.1f, Color.parseColor("#1B0505"))
+            keepColour(false)
             c.restore()
         } else {
             c.save(); c.translate(14f, -6.2f); c.rotate(-11.5f)
@@ -791,7 +793,17 @@ class DragonModel {
     // ---------- main ----------
     private fun smooth01(x: Float): Float { val u = x.coerceIn(0f, 1f); return u * u * (3f - 2f * u) }
 
+    /** Lays the dragon's colour filter (see [DragonPalette]) over the body paints. The eye, the mouth inside and the flame glow switch it off while they are drawn. */
+    private fun applyPalette() {
+        val f = DragonPalette.filter
+        fill.colorFilter = f; stroke.colorFilter = f; scalePaint.colorFilter = f
+    }
+
+    /** Switch the body filter off (true) or on (false) for the next fill: used for the eye, the mouth inside and the tongue. */
+    private fun keepColour(on: Boolean) { fill.colorFilter = if (on) null else DragonPalette.filter }
+
     fun draw(c: Canvas, s: State) {
+        applyPalette()
         pose(s); sample()
         c.save()
         c.translate(s.x, s.y)
@@ -923,14 +935,6 @@ class DragonModel {
         }
     }
 
-    /** Head only (no body, wings or legs), with the head base at (s.x, s.y). Used by the in-app preview. */
-    fun drawHeadOnly(c: Canvas, s: State) {
-        pose(s)
-        c.save(); c.translate(s.x, s.y); c.scale(s.face * s.ds, s.ds); c.translate(-hx, -hy)
-        drawHead(c, s)
-        c.restore()
-    }
-
     private val tv = FloatArray(2)
     private fun toView(s: State, mx: Float, my: Float) {
         var x = mx; var y = my
@@ -964,13 +968,6 @@ class DragonModel {
         pose(s)
         toView(s, hx + cos(hang) * lx - sin(hang) * ly, hy + sin(hang) * lx + cos(hang) * ly)
         out[0] = tv[0]; out[1] = tv[1]
-    }
-
-    /** Mouth tip relative to the head base, in model units (before scaling). */
-    fun mouthLocal(s: State, out: FloatArray) {
-        pose(s)
-        out[0] = cos(hang) * 36f - sin(hang) * 2.5f
-        out[1] = sin(hang) * 36f + cos(hang) * 2.5f
     }
 
     /** Mouth tip in view coordinates. out[0]=x, out[1]=y. */

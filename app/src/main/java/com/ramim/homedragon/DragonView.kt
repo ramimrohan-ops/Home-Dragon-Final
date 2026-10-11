@@ -240,7 +240,7 @@ class DragonView(context: Context) : View(context) {
         val col = FlameColors.at(cols, i / 7f * 85f)
         return if (i == 0) FlameColors.lighten(col, 0.75f) else col
     }
-    private var chCol = IntArray(8) { gradCol(FlameColors.DEFAULT, it) }
+    private var chCol = IntArray(8) { gradCol(FlameColors.BLUE, it) }
     private var sGrad = Array(8) { glow(Color.red(chCol[it]), Color.green(chCol[it]), Color.blue(chCol[it])) }
     // wispy flame particles, two noise variants per colour stage
     private var fCore = Array(2) { flameSprite(238, 249, 255, 11 + it * 5) }
@@ -286,8 +286,8 @@ class DragonView(context: Context) : View(context) {
     private val smkMid = Array(3) { puff(112, 118, 130, 0.3f, 21 + it * 4) }
     private var smkBlue = Array(2) { puff(70, 120, 200, 0.34f, 21 + it * 4) }
 
-    // ---------- flame colours (picked in the app; the default is the original blue) ----------
-    private var flameApplied: IntArray = FlameColors.DEFAULT.copyOf()
+    // ---------- flame colours (picked in the app; the default is Fire, the original blue is one of the palettes) ----------
+    private var flameApplied: IntArray = FlameColors.BLUE.copyOf()      // what the sprites below were built for (the blue flame, until reloadFlame runs)
 
     /** Rebuild the colour ramp and tinted glows when the colours chosen in the app changed. */
     fun reloadFlame() {
@@ -297,7 +297,7 @@ class DragonView(context: Context) : View(context) {
         chCol = IntArray(8) { gradCol(cols, it) }
         sGrad = Array(8) { glow(Color.red(chCol[it]), Color.green(chCol[it]), Color.blue(chCol[it])) }
         ramp = Array(16) { k -> PorterDuffColorFilter(FlameColors.at(cols, k / 15f * 100f), PorterDuff.Mode.SRC_IN) }
-        if (FlameColors.isDefault(cols)) {
+        if (FlameColors.isBlue(cols)) {
             sCore = glow(238, 249, 255); sCyan = glow(95, 214, 255); sBlue = glow(48, 110, 255)
             sHalo = glow(14, 10, 60)
             model.setFlameGlow(Color.rgb(220, 245, 255), Color.rgb(70, 170, 255), Color.rgb(30, 80, 255))

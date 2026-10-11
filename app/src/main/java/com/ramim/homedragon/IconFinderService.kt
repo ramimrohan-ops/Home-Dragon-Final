@@ -23,6 +23,12 @@ import kotlin.math.min
 private const val SETTLE_MS = 300L
 
 /**
+ * Home screen settle gate. "Home is not on top" acts at once (dragon hides, scanning stops, Phone Status is told). "Home is on top"
+ * waits this long first, so the launcher can finish its transition; if home is left again within that time nothing happens at all.
+ */
+private const val HOME_GATE_MS = 1000L
+
+/**
  * Finds home screen icon positions. It only reads node bounds (and whether a node is
  * clickable and labelled). It never reads or stores text.
  */
@@ -32,7 +38,7 @@ class IconFinderService : AccessibilityService() {
     private var scanQueued = false
     private var lastScan = 0L
     private var lastScrollX = -1
-    private val settleScan = Runnable { scanQueued = false; lastScan = System.currentTimeMillis(); scan() }
+    private val settleScan = Runnable { scanQueued = false; if (!IconRegistry.onHome) return@Runnable; lastScan = System.currentTimeMillis(); scan() }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -147,10 +153,20 @@ class IconFinderService : AccessibilityService() {
         return true to "home on top"
     }
 
-    /** Sends the state when it differs from the last one sent (or always when [force] is true), then waits for the confirmation. */
-    private fun publishHome(force: Boolean = false) {
+    /**
+     * Sends the state when it differs from the last one sent (or always when [force] is true), then waits for the confirmation.
+     * "Not home" goes out at once. "Home" is held back until it has been true for 1 s ([settled] = this is that moment), unless
+     * [force] is true (Phone Status asked for the state, or confirmed a different one).
+     */
+    private fun publishHome(force: Boolean = false, settled: Boolean = false) {
         if (!IconRegistry.serviceActive) return
         val (home, why) = strictHome()
+        if (!home) {
+            handler.removeCallbacks(publishGateRun); publishGateOn = false     // left again within the settle time: nothing is sent
+        } else if (!force && !settled && sentHome != true) {
+            if (!publishGateOn) { publishGateOn = true; handler.postDelayed(publishGateRun, HOME_GATE_MS) }
+            return
+        }
         if (!force && home == sentHome) return
         sentHome = home
         seq++
@@ -160,6 +176,9 @@ class IconFinderService : AccessibilityService() {
         handler.removeCallbacks(resendRun)
         handler.postDelayed(resendRun, waits[0])
     }
+
+    private var publishGateOn = false                 // "home" is waiting for its 1 s settle time before it is sent
+    private val publishGateRun = Runnable { publishGateOn = false; publishHome(settled = true) }
 
     private fun resendPending() {
         if (pendingSeq == 0L) return
@@ -188,6 +207,8 @@ class IconFinderService : AccessibilityService() {
 
     override fun onUnbind(intent: Intent?): Boolean {
         handler.removeCallbacks(resendRun); handler.removeCallbacks(publishRun1); handler.removeCallbacks(publishRun2)
+        handler.removeCallbacks(gateRun); handler.removeCallbacks(publishGateRun); handler.removeCallbacks(settleScan)
+        homePending = false; publishGateOn = false; scanQueued = false
         seq++
         HomeSignal.send(this, false, "icon finder off", seq)
         pendingSeq = 0L
@@ -403,14 +424,43 @@ class IconFinderService : AccessibilityService() {
         }
     }
 
+    /** Judged home / not home by the window checks. "Not home" acts now; "home" goes through the 1 s settle gate. */
     private fun setHome(h: Boolean) {
-        if (h != IconRegistry.onHome) {
-            if (h && rechecking) Diag.log(this, "Home found by re-check (was hidden: " + whyNow() + ")")
-            IconRegistry.onHome = h
-            IconRegistry.homeWhy = whyNow()
-            IconRegistry.listener?.invoke()
-            updateMode()
-            if (h) { handler.removeCallbacks(rc1); handler.removeCallbacks(rc2); queueScan() }   // home found: no re-check is needed any more
+        if (h) { if (!IconRegistry.onHome) startGate() } else leaveHome()
+    }
+
+    private var homePending = false         // home was found and the 1 s settle time is running
+    private val gateRun = Runnable { homePending = false; applyHome(true) }
+
+    private fun startGate() {
+        if (homePending) return
+        homePending = true
+        handler.postDelayed(gateRun, HOME_GATE_MS)
+    }
+
+    /** Home is not on top: cancel a running settle time, then hide, stop scanning and tell Phone Status right away. */
+    private fun leaveHome() {
+        if (homePending) { homePending = false; handler.removeCallbacks(gateRun) }
+        applyHome(false)
+    }
+
+    /** Takes the new state into use: dragon (through the listener), mode, scanning and the message to Phone Status. */
+    private fun applyHome(h: Boolean) {
+        if (h == IconRegistry.onHome) return
+        IconRegistry.onHome = h
+        IconRegistry.homeWhy = whyNow()
+        IconRegistry.listener?.invoke()                 // the dragon shows or hides now
+        updateMode()
+        if (h) {
+            handler.removeCallbacks(rc1); handler.removeCallbacks(rc2)   // home found: no re-check is needed any more
+            Diag.log(this, "Home settled after 1 s: dragon shown, first scan, telling Phone Status")
+            lastScan = System.currentTimeMillis()
+            scan()                                      // the first scan, at the same moment the dragon appears
+            publishHome(settled = true)                 // and Phone Status hears "home" at that moment
+        } else {
+            handler.removeCallbacks(settleScan)          // scanning stops at once
+            scanQueued = false
+            publishHome()                               // "not home" goes out at once
         }
     }
 
@@ -463,11 +513,12 @@ class IconFinderService : AccessibilityService() {
     }
 
     private fun queueScan() {
-        if (scanQueued) return
+        if (scanQueued || !IconRegistry.onHome) return      // not home: the icon finder does not scan
         scanQueued = true
         val wait = (300 - (System.currentTimeMillis() - lastScan)).coerceAtLeast(60)
         handler.postDelayed({
             scanQueued = false
+            if (!IconRegistry.onHome) return@postDelayed
             lastScan = System.currentTimeMillis()
             scan()
         }, wait)
@@ -542,9 +593,9 @@ class IconFinderService : AccessibilityService() {
             lastIconsMs = System.currentTimeMillis()
             IconRegistry.icons = found
             if (!IconRegistry.onHome) {
-                IconRegistry.onHome = true                         // the front window is the launcher and shows its icons: it is the home screen
-                updateMode()
+                // the front window is the launcher and shows its icons: it is the home screen (taken into use after the 1 s settle gate)
                 if (rechecking) Diag.log(this, "Home found by re-check (was hidden: $whyBefore)")
+                startGate()
             }
             IconRegistry.listener?.invoke()
         }

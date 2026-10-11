@@ -2,7 +2,12 @@ package com.ramim.homedragon
 
 import android.content.Context
 import android.graphics.Color
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
+import android.graphics.ColorFilter
 import android.graphics.RectF
+import kotlin.math.cos
+import kotlin.math.sin
 
 /** Icon positions found by the accessibility service, shared with the overlay (same process). */
 object IconRegistry {
@@ -19,17 +24,21 @@ object IconRegistry {
     var recheck: (() -> Unit)? = null                   // asks the icon finder to look again at what is in front (the hidden-dragon poll)
 }
 
-/** Flame colours: up to 6, from the hot core to the cooled tip. The default is the original blue flame. */
+/** Flame colours: up to 6, from the hot core to the cooled tip. The default is the Fire palette; the original blue flame is still one of the palettes. */
 object FlameColors {
     const val MAX = 6
-    val DEFAULT = intArrayOf(Color.rgb(215, 240, 255), Color.rgb(120, 225, 255), Color.rgb(55, 130, 255), Color.rgb(78, 60, 230), Color.rgb(42, 24, 150))
-    private val DEFAULT_POS = intArrayOf(0, 18, 45, 75, 100)
+    /** The original blue flame (it has its own hand-tuned glow and sprites). */
+    val BLUE = intArrayOf(Color.rgb(215, 240, 255), Color.rgb(120, 225, 255), Color.rgb(55, 130, 255), Color.rgb(78, 60, 230), Color.rgb(42, 24, 150))
+    val FIRE = intArrayOf(Color.rgb(0xFF, 0xF2, 0xC2), Color.rgb(0xFF, 0xC5, 0x3D), Color.rgb(0xFF, 0x7A, 0x1A), Color.rgb(0xE0, 0x3A, 0x12), Color.rgb(0x7A, 0x1A, 0x0C))
+    val DEFAULT = FIRE
+    private val FIVE_POS = intArrayOf(0, 18, 45, 75, 100)
 
     fun same(a: IntArray, b: IntArray) = a.size == b.size && a.indices.all { (a[it] and 0xFFFFFF) == (b[it] and 0xFFFFFF) }
     fun isDefault(c: IntArray) = same(c, DEFAULT)
+    fun isBlue(c: IntArray) = same(c, BLUE)
 
-    /** Position of colour i of n along the flame, 0..100 (the five default blues keep their original spacing). */
-    fun position(n: Int, i: Int): Int = if (n == 5) DEFAULT_POS[i] else if (n <= 1) 0 else i * 100 / (n - 1)
+    /** Position of colour i of n along the flame, 0..100 (a five-colour palette keeps the original spacing). */
+    fun position(n: Int, i: Int): Int = if (n == 5) FIVE_POS[i] else if (n <= 1) 0 else i * 100 / (n - 1)
 
     /** Colour at t (0 = hot core ... 100 = cooled tip). */
     fun at(cols: IntArray, t: Float): Int {
@@ -64,7 +73,9 @@ object Prefs {
     fun chargeTenths(c: Context) = (((sp(c).getInt("charge", 15) + 2) / 5) * 5).coerceIn(0, 30)   // fire charge-up time in tenths of a second, 0 = off
     fun chargeQualityPct(c: Context) = snap(sp(c).getInt("charge_quality", 100), 10, 100)   // charge-up sparks, particles and waves, 10..100
     fun chargeThickPct(c: Context) = snap(sp(c).getInt("charge_thick", 100), 50, 200)       // thickness of the charge-up wave, 50..200
-    fun chargeFlyPose(c: Context) = sp(c).getBoolean("charge_fly_pose", false)               // the charge-up preview box shows the flying pose
+    fun previewFly(c: Context) = sp(c).getBoolean("charge_fly_pose", false)                  // the preview box shows the flying pose (false = sitting)
+    fun dragonHue(c: Context) = sp(c).getInt("dragon_hue", 0).coerceIn(0, 359)               // dragon colours: hue turn in degrees, 0 = the original look
+    fun dragonSat(c: Context) = sp(c).getInt("dragon_sat", 100).coerceIn(40, 160)            // dragon colours: saturation in percent, 100 = the original look
     fun scalePct(c: Context) = snap(sp(c).getInt("scale", 100), 50, 150)          // dragon size, 50..150
     fun speedPct(c: Context) = snap(sp(c).getInt("speed", 100), 50, 150)          // dragon speed, 50..150
     fun qualityPct(c: Context) = snap(sp(c).getInt("quality", 100), 10, 100)      // frame rate, 10..100
@@ -80,7 +91,12 @@ object Prefs {
     fun setChargeTenths(c: Context, v: Int) = sp(c).edit().putInt("charge", v).apply()
     fun setChargeQualityPct(c: Context, v: Int) = sp(c).edit().putInt("charge_quality", v).apply()
     fun setChargeThickPct(c: Context, v: Int) = sp(c).edit().putInt("charge_thick", v).apply()
-    fun setChargeFlyPose(c: Context, v: Boolean) = sp(c).edit().putBoolean("charge_fly_pose", v).apply()
+    fun setPreviewFly(c: Context, v: Boolean) = sp(c).edit().putBoolean("charge_fly_pose", v).apply()
+    fun setDragonColors(c: Context, hue: Int, sat: Int) {
+        val e = sp(c).edit()
+        if (hue % 360 == 0 && sat == 100) { e.remove("dragon_hue"); e.remove("dragon_sat") } else { e.putInt("dragon_hue", ((hue % 360) + 360) % 360); e.putInt("dragon_sat", sat) }
+        e.apply()
+    }
     fun setScalePct(c: Context, v: Int) = sp(c).edit().putInt("scale", v).apply()
     fun setSpeedPct(c: Context, v: Int) = sp(c).edit().putInt("speed", v).apply()
     fun setQualityPct(c: Context, v: Int) = sp(c).edit().putInt("quality", v).apply()
@@ -104,5 +120,52 @@ object Prefs {
         val e = sp(c).edit()
         if (FlameColors.isDefault(cols)) e.remove("flame") else e.putString("flame", cols.joinToString(",") { String.format("%06X", it and 0xFFFFFF) })
         e.apply()
+    }
+}
+
+/**
+ * Colours of the dragon's body. One colour filter (a hue turn plus a saturation change) is laid over everything the dragon model draws,
+ * so every gradient follows; the eye, the mouth inside and the flame glow are left out and keep their colours. hue 0 and saturation 100
+ * is the original look (no filter at all). Shared by the dragon on the home screen and the preview box (same process).
+ */
+object DragonPalette {
+    @Volatile var filter: ColorFilter? = null
+        private set
+    @Volatile var hue = 0
+        private set
+    @Volatile var sat = 100
+        private set
+
+    /** Reads the saved colours; call once when the process starts. */
+    fun load(c: Context) { use(Prefs.dragonHue(c), Prefs.dragonSat(c)) }
+
+    /** Takes a palette into use (not saved). */
+    fun use(h: Int, s: Int) {
+        hue = ((h % 360) + 360) % 360; sat = s.coerceIn(40, 160)
+        filter = if (hue == 0 && sat == 100) null else ColorMatrixColorFilter(matrix(hue, sat))
+    }
+
+    /** A new random palette: hue turned 40..320 degrees, saturation 85..125%. Saved. */
+    fun randomize(c: Context) {
+        val h = 40 + (Math.random() * 280).toInt()
+        val s = 85 + (Math.random() * 40).toInt()
+        use(h, s); Prefs.setDragonColors(c, hue, sat)
+    }
+
+    /** Back to the original colours. Saved. */
+    fun reset(c: Context) { use(0, 100); Prefs.setDragonColors(c, 0, 100) }
+
+    private fun matrix(h: Int, s: Int): ColorMatrix {
+        val a = Math.toRadians(h.toDouble()); val cs = cos(a).toFloat(); val sn = sin(a).toFloat()
+        val lr = 0.213f; val lg = 0.715f; val lb = 0.072f
+        val rot = ColorMatrix(floatArrayOf(
+            lr + cs * (1 - lr) + sn * -lr, lg + cs * -lg + sn * -lg, lb + cs * -lb + sn * (1 - lb), 0f, 0f,
+            lr + cs * -lr + sn * 0.143f, lg + cs * (1 - lg) + sn * 0.140f, lb + cs * -lb + sn * -0.283f, 0f, 0f,
+            lr + cs * -lr + sn * -(1 - lr), lg + cs * -lg + sn * lg, lb + cs * (1 - lb) + sn * lb, 0f, 0f,
+            0f, 0f, 0f, 1f, 0f
+        ))
+        val satM = ColorMatrix(); satM.setSaturation(s / 100f)
+        rot.postConcat(satM)
+        return rot
     }
 }

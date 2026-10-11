@@ -28,12 +28,13 @@ import android.widget.Toast
 import java.io.File
 
 /**
- * Simple dark home screen for the app: a big start/stop button, five sliders (quality, particles, size and charge-up have preview boxes)
- * (quality, dragon size, dragon speed) that change the dragon live, a flame colour picker, and four setup rows.
+ * Simple dark home screen for the app: a big start/stop button, one pinned preview box (Sitting / Flying, Play / Stop) that shows every change,
+ * nine sliders in two columns plus a random dragon colour button, ready-made flame palettes, and four setup rows.
  */
 class MainActivity : Activity() {
 
     private companion object {
+        const val PREVIEW_DP = 240
         val BG = Color.parseColor("#0A0F1E")
         val CARD = Color.parseColor("#121A30")
         val STROKE = Color.parseColor("#223152")
@@ -43,7 +44,6 @@ class MainActivity : Activity() {
         val TEAL = Color.parseColor("#2DD4BF")
         val BLUE = Color.parseColor("#3B82F6")
         val ORANGE = Color.parseColor("#FF9A3C")
-        val RED = Color.parseColor("#F0634F")
         val GREEN = Color.parseColor("#3DDC97")
     }
 
@@ -52,8 +52,11 @@ class MainActivity : Activity() {
     private lateinit var healthText: TextView
     private val setupRows = ArrayList<SetupRow>()
     private val sliders = ArrayList<Slider>()
-    private var flamePreview: PreviewView? = null
-    private var chargePreview: PreviewView? = null
+    private var masterPreview: MasterPreview? = null       // the one preview box (pinned while the settings scroll)
+    private var previewHolder: android.widget.FrameLayout? = null   // empty space in the page where the preview box belongs
+    private var flameCard: LinearLayout? = null            // the pinned box leaves with this card
+    private var flamePalettes: FlamePalettes? = null
+    private lateinit var rootFrame: android.widget.FrameLayout
     private var logTab = false
     private lateinit var scrollView: ScrollView
     private lateinit var pageMainView: LinearLayout
@@ -92,52 +95,27 @@ class MainActivity : Activity() {
             .apply { topMargin = dp(12) }
     }
 
-    private fun divider() = View(this).apply {
-        setBackgroundColor(STROKE)
-        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1)
-            .apply { topMargin = dp(12); bottomMargin = dp(12) }
-    }
+    // ---------------------------------------------------------------- slider cell (half width)
 
-    // ---------------------------------------------------------------- slider row
-
+    /** One slider: title and value on a line, a one-line hint, the bar. [feed] shows the value in the preview box, [touch] plays one loop there. */
     private inner class Slider(
         title: String, hint: String, val min: Int, val max: Int, start: Int,
         private val save: (Int) -> Unit, private val live: () -> Unit, private val step: Int = 1,
-        private val previews: List<PreviewView> = emptyList(), previewDp: Int = 150,
-        private val def: Int = 100, private val showPreviews: Boolean = true,
+        private val def: Int = 100,
         private val fmt: (Int) -> String = { "$it%" },
-        private val feed: (PreviewView, Int) -> Unit = { p, v -> p.setValue(v) }
+        private val feed: (Int) -> Unit = {},
+        private val touch: () -> Unit = {}
     ) {
-        val value = text(fmt(start), 15f, TEAL, true)
+        val value = text(fmt(start), 12f, TEAL, true)
         val seek = SeekBar(this@MainActivity)
         val view = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL }
-        private val idleStop = Runnable { previews.forEach { it.requestStop() } }
 
         init {
-            val head = LinearLayout(this@MainActivity).apply { gravity = Gravity.CENTER_VERTICAL }
-            head.addView(text(title, 15f, FG, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            head.addView(value)
+            val head = LinearLayout(this@MainActivity).apply { gravity = Gravity.TOP }
+            head.addView(text(title, 12f, FG, true).apply { maxLines = 2 }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            head.addView(value, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(4) })
             view.addView(head)
-            view.addView(text(hint, 11f, MUTED))
-
-            if (!showPreviews) {
-                // the preview box sits elsewhere in the layout
-            } else if (previews.size > 1) {
-                // several boxes sit side by side
-                val row = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL }
-                previews.forEachIndexed { i, p ->
-                    p.setValue(start)
-                    row.addView(p, LinearLayout.LayoutParams(0, dp(previewDp), 1f).apply { if (i > 0) leftMargin = dp(8) })
-                }
-                view.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                    .apply { topMargin = dp(10) })
-            } else {
-                for (p in previews) {
-                    p.setValue(start)
-                    view.addView(p, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(previewDp))
-                        .apply { topMargin = dp(10) })
-                }
-            }
+            view.addView(text(hint, 10f, MUTED).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END })
 
             seek.max = (max - min) / step
             try {
@@ -165,29 +143,21 @@ class MainActivity : Activity() {
                 override fun onProgressChanged(s: SeekBar, p: Int, fromUser: Boolean) {
                     val v = p * step + min
                     value.text = fmt(v)
-                    previews.forEach { feed(it, v) }
-                    if (fromUser) { previews.forEach { it.touch() }; save(v); live() }
+                    if (fromUser) save(v)
+                    feed(v)                                  // the preview box shows the value at once
+                    if (fromUser) live()
                 }
                 override fun onStartTrackingTouch(s: SeekBar) {
                     s.parent?.requestDisallowInterceptTouchEvent(true)
-                    view.removeCallbacks(idleStop)
-                    previews.forEach { it.start() }               // only the preview boxes move
+                    touch()                                  // a touch plays one loop in the preview box
                 }
-                override fun onStopTrackingTouch(s: SeekBar) {
-                    previews.forEach { it.onSliderUp() }
-                    live()
-                    // left alone for about 5 seconds: the previews finish the loop they are playing and stop
-                    view.removeCallbacks(idleStop)
-                    view.postDelayed(idleStop, 5000L)
-                }
+                override fun onStopTrackingTouch(s: SeekBar) { live() }
             })
             view.addView(seek, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                .apply { topMargin = dp(4) })
+                .apply { topMargin = dp(2) })
         }
 
         fun reset() { seek.progress = (def - min) / step; save(def); live() }
-
-        fun release() { view.removeCallbacks(idleStop); previews.forEach { it.halt() } }
     }
 
     // ---------------------------------------------------------------- setup row
@@ -328,128 +298,136 @@ class MainActivity : Activity() {
         col.addView(toggle, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(50))
             .apply { topMargin = dp(14) })
 
-        // settings
+        // settings: the preview box (pinned, see syncPreview), then the sliders in two columns, the colour button being the tenth cell
+        val preview = MasterPreview(this)
+        masterPreview = preview
+        val previewHolder = android.widget.FrameLayout(this)
+        this.previewHolder = previewHolder
+        col.addView(previewHolder, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(PREVIEW_DP)).apply { topMargin = dp(12) })
+
         val settings = card()
         val sHead = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
         sHead.addView(text("Dragon settings", 12f, MUTED, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         val reset = text("Reset all", 12f, ORANGE, true).apply {
             setPadding(dp(8), dp(4), 0, dp(4))
             isClickable = true
-            setOnClickListener { sliders.forEach { it.reset() } }
+            setOnClickListener {
+                sliders.forEach { it.reset() }
+                flamePalettes?.reset()                          // Fire again
+                DragonPalette.reset(this@MainActivity)          // the original dragon colours
+                preview.reloadPalette()
+                preview.touched()
+            }
         }
         sHead.addView(reset)
         settings.addView(sHead)
-        settings.addView(View(this), LinearLayout.LayoutParams(1, dp(8)))
 
+        val reloadSettings = { DragonService.instance?.view?.reloadSettings(); Unit }
         val quality = Slider(
-            "Quality (frame rate)", "Steps of 10%. 100% = full refresh rate. Lower = less battery.",
-            10, 100, Prefs.qualityPct(this), { Prefs.setQualityPct(this, it) }, { DragonService.instance?.view?.reloadSettings() },
-            step = 10, previews = listOf(PreviewView(this, PreviewView.QUALITY), PreviewView(this, PreviewView.FLYING)), previewDp = 150
+            "Quality (fps)", "10% steps",
+            10, 100, Prefs.qualityPct(this), { Prefs.setQualityPct(this, it) }, reloadSettings,
+            step = 10, feed = { preview.setQuality(it) }, touch = { preview.touched() }
         )
         val particles = Slider(
-            "Particles", "Fire, smoke and sparks. Separate from Quality.",
-            10, 100, Prefs.particlePct(this), { Prefs.setParticlePct(this, it) }, { DragonService.instance?.view?.reloadSettings() },
-            step = 10, previews = listOf(PreviewView(this, PreviewView.PARTICLES)), previewDp = 150
+            "Particles", "fire, smoke, sparks",
+            10, 100, Prefs.particlePct(this), { Prefs.setParticlePct(this, it) }, reloadSettings,
+            step = 10, feed = { preview.setParticles(it) }, touch = { preview.touched() }
         )
         val size = Slider(
-            "Dragon size", "How big the dragon is on your icons.",
+            "Dragon size", "on your icons",
             50, 150, Prefs.scalePct(this), { Prefs.setScalePct(this, it) }, { DragonService.instance?.view?.reloadPrefs() },
-            step = 10, previews = listOf(PreviewView(this, PreviewView.SIZE)), previewDp = 170
+            step = 10, feed = { preview.setSize(it) }, touch = { preview.touched() }
         )
         val speed = Slider(
-            "Dragon speed", "How fast it flies, walks and breathes fire.",
-            50, 150, Prefs.speedPct(this), { Prefs.setSpeedPct(this, it) }, { DragonService.instance?.view?.reloadSettings() },
-            step = 10
+            "Dragon speed", "fly, walk, fire",
+            50, 150, Prefs.speedPct(this), { Prefs.setSpeedPct(this, it) }, reloadSettings,
+            step = 10, feed = { preview.setSpeed(it) }, touch = { preview.touched() }
         )
-        // one preview box for the three charge-up sliders (time, quality, wave thickness); Sitting / Flying is switched inside the box
-        val chargePrev = PreviewView(this, PreviewView.CHARGE)
-        chargePreview = chargePrev
-        chargePrev.setValue(Prefs.chargeTenths(this))
-        chargePrev.setQuality(Prefs.chargeQualityPct(this))
-        chargePrev.setThickness(Prefs.chargeThickPct(this))
         val charge = Slider(
-            "Charge-up time", "Glow that builds before every fire breath, in your flame colours. Off = no charge-up.",
-            0, 30, Prefs.chargeTenths(this), { Prefs.setChargeTenths(this, it) }, { DragonService.instance?.view?.reloadSettings() },
-            step = 5, previews = listOf(chargePrev), showPreviews = false, def = 15,
-            fmt = { if (it == 0) "Off" else String.format("%.1f s", it / 10f) }
+            "Charge-up time", "before each breath",
+            0, 30, Prefs.chargeTenths(this), { Prefs.setChargeTenths(this, it) }, reloadSettings,
+            step = 5, def = 15, fmt = { if (it == 0) "Off" else String.format("%.1f s", it / 10f) },
+            feed = { preview.setChargeTime(it) }, touch = { preview.touched() }
         )
         val chargeQ = Slider(
-            "Charge-up quality", "How many sparks and particles. Lower = lighter.",
-            10, 100, Prefs.chargeQualityPct(this), { Prefs.setChargeQualityPct(this, it) }, { DragonService.instance?.view?.reloadSettings() },
-            step = 10, previews = listOf(chargePrev), showPreviews = false, def = 100,
-            feed = { p, v -> p.setQuality(v) }
+            "Charge-up quality", "sparks and particles",
+            10, 100, Prefs.chargeQualityPct(this), { Prefs.setChargeQualityPct(this, it) }, reloadSettings,
+            step = 10, feed = { preview.setChargeQuality(it) }, touch = { preview.touched() }
         )
         val chargeW = Slider(
-            "Charge-up wave thickness", "How thick the glowing wave is.",
-            50, 200, Prefs.chargeThickPct(this), { Prefs.setChargeThickPct(this, it) }, { DragonService.instance?.view?.reloadSettings() },
-            step = 10, previews = listOf(chargePrev), showPreviews = false, def = 100,
-            feed = { p, v -> p.setThickness(v) }
+            "Charge-up wave", "wave thickness",
+            50, 200, Prefs.chargeThickPct(this), { Prefs.setChargeThickPct(this, it) }, reloadSettings,
+            step = 10, feed = { preview.setThickness(it) }, touch = { preview.touched() }
         )
-        sliders.addAll(listOf(quality, particles, size, speed, charge, chargeQ, chargeW))
-        settings.addView(quality.view)
-        settings.addView(divider()); settings.addView(particles.view)
-        settings.addView(divider()); settings.addView(size.view)
-        settings.addView(divider()); settings.addView(speed.view)
-        settings.addView(divider())
-        settings.addView(chargePrev, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(190)).apply { bottomMargin = dp(6) })
-        settings.addView(text("Preview for the three charge-up sliders below. Tap Sitting or Flying in the box.", 11f, MUTED))
-        settings.addView(charge.view)
-        settings.addView(divider()); settings.addView(chargeQ.view)
-        settings.addView(divider()); settings.addView(chargeW.view)
+        val transpHint = if (Build.VERSION.SDK_INT >= 31) "0% solid, max 80%" else "0% solid"
+        val seeLive = {
+            preview.setTransparency(Prefs.transparencyPct(this), Prefs.wingTransPct(this))
+            DragonService.instance?.view?.reloadSettings()
+            Unit
+        }
+        val transp = Slider(
+            "Transparency", transpHint,
+            0, 100, Prefs.transparencyPct(this), { Prefs.setTransparencyPct(this, it) }, seeLive,
+            step = 10, def = 50, feed = { seeLive() }, touch = { preview.touched() }
+        )
+        val wingTransp = Slider(
+            "Wing transparency", "wing skin only",
+            0, 100, Prefs.wingTransPct(this), { Prefs.setWingTransPct(this, it) }, seeLive,
+            step = 10, def = 65, feed = { seeLive() }, touch = { preview.touched() }
+        )
+        sliders.addAll(listOf(quality, particles, size, speed, charge, chargeQ, chargeW, transp, wingTransp))
+
+        // tenth cell: a new random palette for the dragon, saved and shown in the preview box at once
+        val colourBtn = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            background = shape(Color.parseColor("#3B2470"), 14, Color.parseColor("#B78CFF"))
+            isClickable = true
+            addView(text("Random dragon colour", 12f, Color.WHITE, true).apply { gravity = Gravity.CENTER })
+            addView(text("press for a new palette", 10f, Color.parseColor("#D9C8FF")).apply { gravity = Gravity.CENTER })
+            setOnClickListener {
+                DragonPalette.randomize(this@MainActivity)
+                preview.reloadPalette()
+                preview.touched()
+            }
+        }
+        val cells = listOf<View>(quality.view, particles.view, size.view, speed.view, charge.view, chargeQ.view, chargeW.view, transp.view, wingTransp.view, colourBtn)
+        for (r in 0 until 5) {
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            for (k in 0..1) {
+                val cell = cells[r * 2 + k]
+                val lp = if (cell === colourBtn) LinearLayout.LayoutParams(0, dp(54), 1f).apply { topMargin = dp(8) }
+                else LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                if (k == 1) lp.leftMargin = dp(14)
+                row.addView(cell, lp)
+            }
+            settings.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                .apply { topMargin = dp(if (r == 0) 10 else 14) })
+        }
         col.addView(settings)
 
-        // visual: flame colours (live preview + picker, blue is the default) and the two transparency sliders
+        // visual: flame colours, from ready-made palettes (Fire is the default)
         val flame = card()
+        flameCard = flame
         flame.addView(text("Visual", 12f, MUTED, true))
         flame.addView(View(this), LinearLayout.LayoutParams(1, dp(8)))
         val fHead = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
         fHead.addView(text("Flame colours", 15f, FG, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         flame.addView(fHead)
-        flame.addView(text("Up to 6 colours, blended from the hot core to the cooled tip. Blue is the default.", 11f, MUTED))
-        val fPrev = PreviewView(this, PreviewView.PARTICLES)
-        flamePreview = fPrev
-        flame.addView(fPrev, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(150)).apply { topMargin = dp(10) })
-        val picker = FlamePicker(this) { cols, done ->
+        flame.addView(text("Tap a palette: the dragon breathes it. Fire is the default.", 11f, MUTED))
+        val palettes = FlamePalettes(this) { cols ->
             Prefs.setFlameColors(this, cols)
-            fPrev.reloadFlame()
-            chargePreview?.reloadFlame()          // the charge-up preview takes the same colours at once
-            fPrev.playLoops(2)                       // plays two loops of fire in the new colours, then pauses
-            if (done) DragonService.instance?.view?.reloadFlame()
+            preview.reloadFlame()
+            DragonService.instance?.view?.reloadFlame()
+            preview.touched()                                   // one breath in the new colours
         }
-        val fReset = text("Reset to blue", 12f, ORANGE, true).apply {
+        flamePalettes = palettes
+        fHead.addView(text("Reset to fire", 12f, ORANGE, true).apply {
             setPadding(dp(8), dp(4), 0, dp(4))
             isClickable = true
-            setOnClickListener { picker.reset() }
-        }
-        fHead.addView(fReset)
-        flame.addView(picker.view)
-
-        val seePrev = PreviewView(this, PreviewView.SEETHROUGH)
-        seePrev.setTransparency(Prefs.transparencyPct(this), Prefs.wingTransPct(this))
-        val seeLive = {
-            seePrev.setTransparency(Prefs.transparencyPct(this), Prefs.wingTransPct(this))
-            DragonService.instance?.view?.reloadSettings()
-            Unit
-        }
-        val transpHint = if (Build.VERSION.SDK_INT >= 31) "0% = most solid (max 80% on Android 12+)." else "0% = solid, 100% = barely visible."
-        val transp = Slider(
-            "Transparency", transpHint,
-            0, 100, Prefs.transparencyPct(this), { Prefs.setTransparencyPct(this, it) }, seeLive,
-            step = 10, previews = listOf(seePrev), def = 50, showPreviews = false
-        )
-        val wingTransp = Slider(
-            "Wing transparency", transpHint,
-            0, 100, Prefs.wingTransPct(this), { Prefs.setWingTransPct(this, it) }, seeLive,
-            step = 10, previews = listOf(seePrev), def = 65, showPreviews = false
-        )
-        sliders.addAll(listOf(transp, wingTransp))
-        // sliders on the left, one preview box on the right
-        val seeRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        val seeLeft = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        seeLeft.addView(transp.view); seeLeft.addView(divider()); seeLeft.addView(wingTransp.view)
-        seeRow.addView(seeLeft, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.1f))
-        seeRow.addView(seePrev, LinearLayout.LayoutParams(0, dp(220), 0.9f).apply { leftMargin = dp(12) })
-        flame.addView(divider()); flame.addView(seeRow)
+            setOnClickListener { palettes.reset() }
+        })
+        flame.addView(palettes.view)
         col.addView(flame)
 
         // setup rows: icon tile, title and one button each; Usage access is optional and does not count towards "setup finished"
@@ -540,7 +518,7 @@ class MainActivity : Activity() {
             tabLog.setTextColor(if (log) FG else MUTED)
             try {
                 if (!tabsReady) return
-                if (log) { sliders.forEach { it.release() }; flamePreview?.stop(); refresh() } else { flamePreview?.showStill(); chargePreview?.reloadFlame() }
+                if (log) { masterPreview?.stop(); refresh() } else { masterPreview?.reloadFlame() }
             } catch (_: Throwable) {
             }
         }
@@ -570,7 +548,15 @@ class MainActivity : Activity() {
             }
         }
         scrollView = scroll
-        setContentView(scroll)
+        // the preview box floats above the scrolling page: it sits where its empty holder is, and stays under the status bar while the sliders scroll
+        val root = android.widget.FrameLayout(this)
+        rootFrame = root
+        root.addView(scroll, android.widget.FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        masterPreview?.let { pv ->
+            root.addView(pv, android.widget.FrameLayout.LayoutParams(dp(300), dp(PREVIEW_DP)))
+            root.viewTreeObserver.addOnPreDrawListener { syncPreview(); true }
+        }
+        setContentView(root)
         if (Build.VERSION.SDK_INT >= 30) {
             try {
                 window.insetsController?.setSystemBarsAppearance(
@@ -583,6 +569,30 @@ class MainActivity : Activity() {
 
         // first-run page (or the notification question) once the window is up
         window.decorView.post { startFlow() }
+    }
+
+    private val loc1 = IntArray(2)
+    private val loc2 = IntArray(2)
+
+    /** Puts the preview box where its holder is; once the page scrolls it stays below the status bar, and it leaves with the flame colours card. */
+    private fun syncPreview() {
+        val pv = masterPreview ?: return
+        val holder = previewHolder ?: return
+        if (!holder.isShown || holder.width <= 0) { if (pv.visibility != View.GONE) pv.visibility = View.GONE; return }
+        if (pv.visibility != View.VISIBLE) pv.visibility = View.VISIBLE
+        val lp = pv.layoutParams
+        if (lp.width != holder.width || lp.height != holder.height) { lp.width = holder.width; lp.height = holder.height; pv.layoutParams = lp }
+        rootFrame.getLocationInWindow(loc1)
+        holder.getLocationInWindow(loc2)
+        val x = (loc2[0] - loc1[0]).toFloat()
+        var y = (loc2[1] - loc1[1]).toFloat()
+        y = kotlin.math.max(y, scrollView.paddingTop + dp(6).toFloat())
+        flameCard?.let { fc ->
+            fc.getLocationInWindow(loc2)
+            y = kotlin.math.min(y, (loc2[1] - loc1[1] + fc.height - holder.height).toFloat())
+        }
+        pv.translationX = x
+        pv.translationY = y
     }
 
     private fun askNotifications() {
@@ -791,8 +801,7 @@ class MainActivity : Activity() {
         stopHighlight()
         // leaving the app: stop the previews and let the home-screen dragon come back
         try {
-            sliders.forEach { it.release() }
-            flamePreview?.stop()
+            masterPreview?.stop()
             DragonService.appOpen = false
             DragonService.instance?.refreshHold()
         } catch (_: Throwable) {
@@ -828,7 +837,7 @@ class MainActivity : Activity() {
         })
         DragonService.appOpen = true
         DragonService.instance?.refreshHold()
-        try { if (!logTab) { flamePreview?.showStill(); chargePreview?.reloadFlame() } } catch (_: Throwable) {}
+        try { if (!logTab) masterPreview?.reloadFlame() } catch (_: Throwable) {}
         // the icon finder was switched on in Android's settings before the user agreed here: show the disclosure now
         if (intent?.getBooleanExtra("a11y_disclosure", false) == true) {
             intent.removeExtra("a11y_disclosure")
