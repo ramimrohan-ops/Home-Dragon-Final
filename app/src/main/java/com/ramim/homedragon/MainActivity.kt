@@ -53,6 +53,7 @@ class MainActivity : Activity() {
     private val setupRows = ArrayList<SetupRow>()
     private val sliders = ArrayList<Slider>()
     private var masterPreview: MasterPreview? = null       // the one preview box (pinned while the settings scroll)
+    private var updateBackButton: (() -> Unit)? = null     // greys the Back button out when there is no earlier dragon colour
     private var previewHolder: android.widget.FrameLayout? = null   // empty space in the page where the preview box belongs
     private var flameCard: LinearLayout? = null            // the pinned box leaves with this card
     private var flamePalettes: FlamePalettes? = null
@@ -298,7 +299,7 @@ class MainActivity : Activity() {
         col.addView(toggle, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(50))
             .apply { topMargin = dp(14) })
 
-        // settings: the preview box (pinned, see syncPreview), then the sliders in two columns, the colour button being the tenth cell
+        // settings: the preview box (pinned, see syncPreview), then the eight sliders in two columns, then one row with the three colour buttons
         val preview = MasterPreview(this)
         masterPreview = preview
         val previewHolder = android.widget.FrameLayout(this)
@@ -315,6 +316,7 @@ class MainActivity : Activity() {
                 sliders.forEach { it.reset() }
                 flamePalettes?.reset()                          // Fire again
                 DragonPalette.reset(this@MainActivity)          // the original dragon colours
+                updateBackButton?.invoke()
                 preview.reloadPalette()
                 preview.touched()
             }
@@ -323,10 +325,16 @@ class MainActivity : Activity() {
         settings.addView(sHead)
 
         val reloadSettings = { DragonService.instance?.view?.reloadSettings(); Unit }
+        // Quality in real fps: the stops are rates that divide the screen's refresh rate evenly, plus a few "uneven" ones in between
+        val fpsStops = FpsStops.stops(FpsStops.topHz(this))
+        val fpsAt = { i: Int -> fpsStops[i.coerceIn(0, fpsStops.size - 1)] }
         val quality = Slider(
-            "Quality (fps)", "10% steps",
-            10, 100, Prefs.qualityPct(this), { Prefs.setQualityPct(this, it) }, reloadSettings,
-            step = 10, feed = { preview.setQuality(it) }, touch = { preview.touched() }
+            "Quality", "even steps run smoothest",
+            0, fpsStops.size - 1, fpsStops.indexOfFirst { it.fps == Prefs.qualityFps(this) }.coerceAtLeast(0),
+            { Prefs.setQualityFps(this, fpsAt(it).fps) }, reloadSettings,
+            def = fpsStops.size - 1,
+            fmt = { val st = fpsAt(it); if (st.even) "${st.fps} fps" else "${st.fps} fps · uneven" },
+            feed = { preview.setQuality(fpsAt(it).fps) }, touch = { preview.touched() }
         )
         val particles = Slider(
             "Particles", "fire, smoke, sparks",
@@ -361,7 +369,7 @@ class MainActivity : Activity() {
         )
         val transpHint = if (Build.VERSION.SDK_INT >= 31) "0% solid, max 80%" else "0% solid"
         val seeLive = {
-            preview.setTransparency(Prefs.transparencyPct(this), Prefs.wingTransPct(this))
+            preview.setTransparency(Prefs.transparencyPct(this))
             DragonService.instance?.view?.reloadSettings()
             Unit
         }
@@ -370,14 +378,17 @@ class MainActivity : Activity() {
             0, 100, Prefs.transparencyPct(this), { Prefs.setTransparencyPct(this, it) }, seeLive,
             step = 10, def = 50, feed = { seeLive() }, touch = { preview.touched() }
         )
-        val wingTransp = Slider(
-            "Wing transparency", "wing skin only",
-            0, 100, Prefs.wingTransPct(this), { Prefs.setWingTransPct(this, it) }, seeLive,
-            step = 10, def = 65, feed = { seeLive() }, touch = { preview.touched() }
-        )
-        sliders.addAll(listOf(quality, particles, size, speed, charge, chargeQ, chargeW, transp, wingTransp))
+        sliders.addAll(listOf(quality, particles, size, speed, charge, chargeQ, chargeW, transp))
 
-        // tenth cell: a new random palette for the dragon, saved and shown in the preview box at once
+        // last row, three buttons: Random (big), Back (the earlier colours, up to 10) and Reset (the original colours)
+        fun colourButton(symbol: String, label: String) = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            background = shape(Color.parseColor("#2A1B52"), 14, Color.parseColor("#B78CFF"))
+            isClickable = true
+            addView(text(symbol, 20f, Color.WHITE, true).apply { gravity = Gravity.CENTER })
+            addView(text(label, 10f, Color.parseColor("#D9C8FF"), true).apply { gravity = Gravity.CENTER })
+        }
         val colourBtn = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
@@ -385,25 +396,47 @@ class MainActivity : Activity() {
             isClickable = true
             addView(text("Random dragon colour", 12f, Color.WHITE, true).apply { gravity = Gravity.CENTER })
             addView(text("press for a new palette", 10f, Color.parseColor("#D9C8FF")).apply { gravity = Gravity.CENTER })
-            setOnClickListener {
-                DragonPalette.randomize(this@MainActivity)
-                preview.reloadPalette()
-                preview.touched()
-            }
         }
-        val cells = listOf<View>(quality.view, particles.view, size.view, speed.view, charge.view, chargeQ.view, chargeW.view, transp.view, wingTransp.view, colourBtn)
-        for (r in 0 until 5) {
+        val backBtn = colourButton("\u27F5", "Back")
+        val resetBtn = colourButton("\u21BA", "Reset")
+        val updateBack = {
+            val can = DragonPalette.canBack()
+            backBtn.isEnabled = can; backBtn.isClickable = can; backBtn.alpha = if (can) 1f else 0.4f
+        }
+        updateBackButton = updateBack
+        updateBack()
+        colourBtn.setOnClickListener {
+            DragonPalette.randomize(this@MainActivity)
+            updateBack()
+            preview.reloadPalette()
+            preview.touched()
+        }
+        backBtn.setOnClickListener {
+            if (DragonPalette.back(this@MainActivity)) { updateBack(); preview.reloadPalette(); preview.touched() }
+        }
+        resetBtn.setOnClickListener {
+            DragonPalette.reset(this@MainActivity)
+            updateBack()
+            preview.reloadPalette()
+            preview.touched()
+        }
+        val cells = listOf<View>(quality.view, particles.view, size.view, speed.view, charge.view, chargeQ.view, chargeW.view, transp.view)
+        for (r in 0 until 4) {
             val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
             for (k in 0..1) {
-                val cell = cells[r * 2 + k]
-                val lp = if (cell === colourBtn) LinearLayout.LayoutParams(0, dp(54), 1f).apply { topMargin = dp(8) }
-                else LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
                 if (k == 1) lp.leftMargin = dp(14)
-                row.addView(cell, lp)
+                row.addView(cells[r * 2 + k], lp)
             }
             settings.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                 .apply { topMargin = dp(if (r == 0) 10 else 14) })
         }
+        val colourRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        colourRow.addView(colourBtn, LinearLayout.LayoutParams(0, dp(54), 1f))
+        colourRow.addView(backBtn, LinearLayout.LayoutParams(dp(64), dp(54)).apply { leftMargin = dp(8) })
+        colourRow.addView(resetBtn, LinearLayout.LayoutParams(dp(64), dp(54)).apply { leftMargin = dp(8) })
+        settings.addView(colourRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            .apply { topMargin = dp(18) })
         col.addView(settings)
 
         // visual: flame colours, from ready-made palettes (Fire is the default)
@@ -518,7 +551,7 @@ class MainActivity : Activity() {
             tabLog.setTextColor(if (log) FG else MUTED)
             try {
                 if (!tabsReady) return
-                if (log) { masterPreview?.stop(); refresh() } else { masterPreview?.reloadFlame() }
+                if (log) { masterPreview?.stop(); refresh() } else { masterPreview?.reloadFlame(); masterPreview?.reloadIcons() }
             } catch (_: Throwable) {
             }
         }
@@ -837,7 +870,7 @@ class MainActivity : Activity() {
         })
         DragonService.appOpen = true
         DragonService.instance?.refreshHold()
-        try { if (!logTab) masterPreview?.reloadFlame() } catch (_: Throwable) {}
+        try { if (!logTab) { masterPreview?.reloadFlame(); masterPreview?.reloadIcons() } } catch (_: Throwable) {}
         // the icon finder was switched on in Android's settings before the user agreed here: show the disclosure now
         if (intent?.getBooleanExtra("a11y_disclosure", false) == true) {
             intent.removeExtra("a11y_disclosure")
@@ -969,6 +1002,8 @@ class MainActivity : Activity() {
         sb.append("Dragon service : ").append(if (running) "running" else "NOT running").append('\n')
         sb.append("Icon finder    : ").append(if (finder) "connected" else if (a11yEnabled()) "switched on, not connected" else "off").append('\n')
         sb.append("Icon finder mode: ").append(if (!finder) "-" else if (IconRegistry.light) "light" else "full").append('\n')
+        sb.append("Page bar        : ").append(if (IconRegistry.page > 0) "page ${IconRegistry.page} of ${IconRegistry.pages}" else "-").append('\n')
+        sb.append("Last scan      : ").append(IconRegistry.scanNote.ifEmpty { "-" }).append('\n')
         sb.append("Usage access   : ").append(if (Foreground.granted(this)) "on" else "off").append('\n')
         sb.append("Auto-restarts  : ").append(Diag.restartCount(this)).append('\n')
         val ev = Diag.lines(this)

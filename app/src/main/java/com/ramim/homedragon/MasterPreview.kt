@@ -12,10 +12,10 @@ import android.graphics.RadialGradient
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
-import android.hardware.display.DisplayManager
 import android.view.Choreographer
 import android.view.MotionEvent
 import android.view.View
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
@@ -23,7 +23,8 @@ import kotlin.math.sin
 
 /**
  * The one preview box for every setting: a wide rectangle with the dragon on the left, a dummy icon grid behind it (so the see-through
- * effect shows) and room on the right for the fire.
+ * effect shows) and room on the right for the fire. The dummy icons are drawn at the size of your real home screen icons (measured by the
+ * icon finder), and the dragon has the same size next to them as on the home screen.
  *
  * - Sitting / Flying buttons (bottom left). Sitting: the dragon sits with its wings open and upright; the scale bar (the dragon's width at 100%)
  *   shows only here. Flying: wings flapping in place, still at the top of the flap.
@@ -55,7 +56,7 @@ class MasterPreview(context: Context) : View(context) {
     private val st = DragonModel.State()
 
     // values of the sliders
-    private var qualityPct = Prefs.qualityPct(context)
+    private var qualityFps = Prefs.qualityFps(context)
     private var particlePct = Prefs.particlePct(context)
     private var sizePct = Prefs.scalePct(context)
     private var speedPct = Prefs.speedPct(context)
@@ -63,7 +64,6 @@ class MasterPreview(context: Context) : View(context) {
     private var chargeQPct = Prefs.chargeQualityPct(context)
     private var thickPct = Prefs.chargeThickPct(context)
     private var bodyT = Prefs.transparencyPct(context)
-    private var wingT = Prefs.wingTransPct(context)
     private var flyPose = Prefs.previewFly(context)
 
     // animation state
@@ -86,15 +86,7 @@ class MasterPreview(context: Context) : View(context) {
 
     private val chargeS get() = chargeTenths / 10f
 
-    private val hz: Float = try {
-        val d = (context.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager).getDisplay(0)
-        val cur = d.mode
-        val best = d.supportedModes.filter { it.physicalWidth == cur.physicalWidth && it.physicalHeight == cur.physicalHeight }
-            .maxOfOrNull { it.refreshRate } ?: d.refreshRate
-        max(30f, best)
-    } catch (_: Throwable) {
-        60f
-    }
+    private val hz: Float = max(30f, FpsStops.topHz(context).toFloat())
 
     // flame particles
     private val fx = FloatArray(MAXF); private val fy = FloatArray(MAXF)
@@ -109,6 +101,7 @@ class MasterPreview(context: Context) : View(context) {
     private var geomReady = false
     private val tmp = FloatArray(2)
     private var bgBitmap: Bitmap? = null
+    private var lastArt = 0f                              // icon size the background was drawn with
 
     // flame colours
     private var flameCols: IntArray = FlameColors.BLUE.copyOf()
@@ -138,14 +131,14 @@ class MasterPreview(context: Context) : View(context) {
 
     // ---------------------------------------------------------------- values from the sliders (drawn at once)
 
-    fun setQuality(v: Int) { qualityPct = v; invalidate() }
+    fun setQuality(fps: Int) { qualityFps = fps; invalidate() }
     fun setParticles(v: Int) { particlePct = v; invalidate() }
     fun setSize(v: Int) { sizePct = v; invalidate() }
     fun setSpeed(v: Int) { speedPct = v; invalidate() }
     fun setChargeTime(tenths: Int) { chargeTenths = tenths; invalidate() }
     fun setChargeQuality(v: Int) { chargeQPct = v; invalidate() }
     fun setThickness(v: Int) { thickPct = v; invalidate() }
-    fun setTransparency(body: Int, wing: Int) { bodyT = body; wingT = wing; invalidate() }
+    fun setTransparency(body: Int) { bodyT = body; invalidate() }
 
     /** The dragon colours changed (or were reset): draw again. */
     fun reloadPalette() = invalidate()
@@ -236,7 +229,7 @@ class MasterPreview(context: Context) : View(context) {
     }
 
     /** What the real dragon would use for this Quality: a sitting dragon without fire is drawn at 30 fps at most. */
-    private fun fullRate(): Float = max(5f, hz * qualityPct / 100f)
+    private fun fullRate(): Float = max(5f, min(qualityFps.toFloat(), hz))
 
     private val firing get() = cyc in (0.45f + chargeS)..(2.1f + chargeS)
 
@@ -373,23 +366,42 @@ class MasterPreview(context: Context) : View(context) {
         Color.parseColor("#3D8BE8"), Color.parseColor("#A66BE0"), Color.parseColor("#EDEDED")
     )
 
-    /** The box background (gradient and a dummy icon grid) drawn once per size. */
+    /** Width of a normal icon's picture on your home screen, in pixels: measured by the icon finder, or a close guess until it has run once. */
+    private fun artPx(): Float {
+        val saved = Prefs.iconArtPx(context)
+        return if (saved >= dp(30f)) saved else 0.171f * resources.displayMetrics.widthPixels
+    }
+
+    /** The dragon's scale on the home screen at Dragon size 100% (the same formula as the real dragon uses, in the same pixels). */
+    private fun dsHome100(): Float = artPx() / 58f * 0.55f
+
+    /** The icon size changed (the icon finder measured it): draw the dummy icons again. */
+    fun reloadIcons() {
+        if (width > 0 && height > 0 && abs(artPx() - lastArt) >= 1f) { makeBackground(width, height); invalidate() }
+    }
+
+    /** The box background (gradient and a dummy icon grid at your real icon size) drawn once per size. */
     private fun makeBackground(w: Int, h: Int) {
         val b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val c = Canvas(b)
         val p = Paint(Paint.ANTI_ALIAS_FLAG)
         p.shader = LinearGradient(0f, 0f, 0f, h.toFloat(), Color.parseColor("#1D2D55"), Color.parseColor("#0E162E"), Shader.TileMode.CLAMP)
         c.drawRect(0f, 0f, w.toFloat(), h.toFloat(), p); p.shader = null
-        // dummy icons: columns across the box, three rows above the buttons
-        val tile = dp(34f); val gap = dp(14f)
-        val cols = max(3, ((w - gap) / (tile + gap)).toInt())
-        val left = (w - (cols * tile + (cols - 1) * gap)) / 2f
-        val top = dp(40f); val bottom = h - dp(52f)
-        val rows = 3
-        val rowGap = if (rows > 1) (bottom - top - tile) / (rows - 1) else 0f
+        // dummy icons: the size and spacing of your home screen (columns across the screen width, rows one icon cell high)
+        val tile = artPx()
+        lastArt = tile
+        val cols0 = Prefs.iconCols(context).takeIf { it in 3..7 } ?: 4
+        val colPitch = resources.displayMetrics.widthPixels / cols0.toFloat()
+        val rowPitch = tile / 0.72f
+        val cols = max(2, (w / colPitch).toInt())                          // whole columns that fit in the box
+        val left = (w - cols * colPitch) / 2f + (colPitch - tile) / 2f
+        val topLimit = dp(24f)
+        val avail = h - dp(46f) - topLimit                                  // between the top edge and the buttons
+        val rows = (((avail - tile) / rowPitch).toInt() + 1).coerceIn(1, 3)
+        val top = topLimit + max(0f, (avail - (tile + (rows - 1) * rowPitch)) / 2f)
         val r = tile * 0.24f
         for (ry in 0 until rows) for (cx in 0 until cols) {
-            val x0 = left + cx * (tile + gap); val y0 = top + ry * rowGap
+            val x0 = left + cx * colPitch; val y0 = top + ry * rowPitch
             val k = (ry * cols + cx) % tileCols.size
             val col = tileCols[k]
             p.shader = LinearGradient(0f, y0, 0f, y0 + tile, (col and 0x00FFFFFF) or (0x7A shl 24),
@@ -404,10 +416,10 @@ class MasterPreview(context: Context) : View(context) {
             }
         }
         bgBitmap = b
-        // the fire lands on the middle icon of the last column
+        // the fire lands on the middle-row icon of the last column
         icSize = tile
-        icx = left + (cols - 1) * (tile + gap) + tile / 2f
-        icy = top + rowGap + tile / 2f
+        icx = left + (cols - 1) * colPitch + tile / 2f
+        icy = top + (rows / 2) * rowPitch + tile / 2f
     }
 
     // ---------------------------------------------------------------- drawing
@@ -428,9 +440,9 @@ class MasterPreview(context: Context) : View(context) {
             st.head = model.restHead(1f, 0f)
             st.wingPh = wingPh
             st.bob = (sin(wingPh) - sin(TOP_PH)) * 3f
-            val ds150 = min(w * 0.46f / FLY_W, (area - dp(6f)) * 0.96f / FLY_H)
-            val ds = ds150 * sizePct / 150f
-            val cx = dp(10f) + FLY_W * ds150 * 0.5f
+            val ds150 = min(w * 0.46f / FLY_W, (area - dp(6f)) * 0.96f / FLY_H)     // the most the box can hold
+            val ds = min(dsHome100() * sizePct / 100f, ds150)                       // the same size next to the icons as on the home screen
+            val cx = dp(10f) + FLY_W * min(dsHome100(), ds150) * 0.5f
             st.ds = ds
             st.x = cx - FLY_CX * ds
             st.y = area / 2f - FLY_CY * ds
@@ -440,8 +452,8 @@ class MasterPreview(context: Context) : View(context) {
             st.head = model.restHead(0f, 0f) + 0.04f * sin(t * 0.6f)
             val base = area - dp(8f)                  // ground line
             val ds150 = min(w * 0.42f / MODEL_W, (base - dp(6f)) / MODEL_H)
-            val ds = ds150 * sizePct / 150f
-            val cx = dp(10f) + MODEL_W * ds150 * 0.5f
+            val ds = min(dsHome100() * sizePct / 100f, ds150)
+            val cx = dp(10f) + MODEL_W * min(dsHome100(), ds150) * 0.5f
             st.ds = ds
             st.x = cx - MODEL_CX * ds
             st.y = base
@@ -472,8 +484,8 @@ class MasterPreview(context: Context) : View(context) {
             val area = h - dp(46f)
             val base = area - dp(8f)
             val ds150 = min(w * 0.42f / MODEL_W, (base - dp(6f)) / MODEL_H)
-            val ds100 = ds150 * 100f / 150f
-            val cx = dp(10f) + MODEL_W * ds150 * 0.5f
+            val ds100 = min(dsHome100(), ds150)
+            val cx = dp(10f) + MODEL_W * ds100 * 0.5f
             val bw = MODEL_W * ds100
             fill.shader = null; fill.color = Color.argb(210, 220, 230, 247)
             c.drawRoundRect(cx - bw / 2f, base + dp(3f), cx + bw / 2f, base + dp(8f), dp(2.5f), dp(2.5f), fill)
@@ -483,7 +495,7 @@ class MasterPreview(context: Context) : View(context) {
         }
 
         // the dragon (Android 12+ makes this kind of overlay window 20% see-through, so the most solid it can be is 80%: shown the same here)
-        model.setTransparency(bodyT, wingT)
+        model.setTransparency(bodyT, Prefs.wingOf(bodyT))
         val capped = android.os.Build.VERSION.SDK_INT >= 31
         val sv = if (capped) c.saveLayerAlpha(0f, 0f, w, h, (0.8f * 255f).toInt()) else 0
         model.draw(c, st)
@@ -536,7 +548,7 @@ class MasterPreview(context: Context) : View(context) {
     /** Frame rate (top left), Play / Stop (top right), Sitting / Flying (bottom left). */
     private fun drawOverlay(c: Canvas, w: Float, h: Float) {
         // frame rate: what the real dragon would use for this Quality
-        val full = max(5, Math.round(hz * qualityPct / 100f))
+        val full = max(5, Math.round(min(qualityFps.toFloat(), hz)))
         val shown = if (flyPose) full else min(30, full)
         textFill.textAlign = Paint.Align.LEFT; textFill.textSize = dp(10.5f); textFill.color = Color.parseColor("#B8C6E4")
         textFill.setShadowLayer(dp(3f), 0f, dp(1f), Color.argb(200, 0, 0, 0))

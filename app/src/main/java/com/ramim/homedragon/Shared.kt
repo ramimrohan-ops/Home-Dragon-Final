@@ -6,7 +6,9 @@ import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
 import android.graphics.ColorFilter
 import android.graphics.RectF
+import android.hardware.display.DisplayManager
 import kotlin.math.cos
+import kotlin.math.min
 import kotlin.math.sin
 
 /** Icon positions found by the accessibility service, shared with the overlay (same process). */
@@ -18,6 +20,9 @@ object IconRegistry {
     var listener: (() -> Unit)? = null                  // always called on the main thread
     var swipeListener: (() -> Unit)? = null             // launcher page is scrolling sideways (main thread)
     @Volatile var homeWhy: String = ""                 // why the home screen was last judged hidden (for the health log)
+    @Volatile var page: Int = 0                        // home screen page the page bar names (0 = no bar seen), set by the icon finder after each settled scan
+    @Volatile var pages: Int = 0                       // number of home screen pages the page bar names
+    @Volatile var scanNote: String = ""                // the last scan in words, for the health log (page, saved or full, items, time)
     @Volatile var idle: Boolean = false                // screen off or locked: set by the dragon service, the icon finder then runs in light mode
     @Volatile var light: Boolean = false               // the icon finder is in light mode (window changes only), shown in the health card
     var modeChanged: (() -> Unit)? = null               // asks the icon finder to pick light or full mode again (may be called from any thread)
@@ -78,10 +83,17 @@ object Prefs {
     fun dragonSat(c: Context) = sp(c).getInt("dragon_sat", 100).coerceIn(40, 160)            // dragon colours: saturation in percent, 100 = the original look
     fun scalePct(c: Context) = snap(sp(c).getInt("scale", 100), 50, 150)          // dragon size, 50..150
     fun speedPct(c: Context) = snap(sp(c).getInt("speed", 100), 50, 150)          // dragon speed, 50..150
-    fun qualityPct(c: Context) = snap(sp(c).getInt("quality", 100), 10, 100)      // frame rate, 10..100
+    fun qualityFps(c: Context): Int {                                                // frame rate in real fps, one of the Quality slider's stops (default: the screen's top rate = every vsync)
+        val top = FpsStops.topHz(c)
+        val v = sp(c).getInt("quality_fps", 0)
+        return FpsStops.stops(top).firstOrNull { it.fps == v }?.fps ?: top
+    }
     fun particlePct(c: Context) = snap(sp(c).getInt("particles", 100), 10, 100)   // fire, smoke and sparks, 10..100
     fun transparencyPct(c: Context) = snap(sp(c).getInt("transparency", 50), 0, 100)     // whole dragon, 0 = solid .. 100 = barely visible
-    fun wingTransPct(c: Context) = snap(sp(c).getInt("wing_transparency", 65), 0, 100)   // wing skin, 0 = solid .. 100 = barely visible
+    /** The wing skin is always 10 points more see-through than the body (same scale, 100 at most): there is no separate wing slider. */
+    fun wingOf(body: Int) = min(100, body + 10)
+    fun iconArtPx(c: Context) = sp(c).getFloat("icon_art_px", 0f)                  // width of a normal icon's picture on the home screen in pixels, measured by the icon finder (0 = not measured yet)
+    fun iconCols(c: Context) = sp(c).getInt("icon_cols", 0)                         // icons per row on the home screen, measured with it
     fun a11yConsent(c: Context) = sp(c).getBoolean("a11y_consent", false)          // user agreed to the Icon finder disclosure
     fun cols(c: Context) = sp(c).getInt("cols", 4)
     fun rows(c: Context) = sp(c).getInt("rows", 6)
@@ -99,10 +111,12 @@ object Prefs {
     }
     fun setScalePct(c: Context, v: Int) = sp(c).edit().putInt("scale", v).apply()
     fun setSpeedPct(c: Context, v: Int) = sp(c).edit().putInt("speed", v).apply()
-    fun setQualityPct(c: Context, v: Int) = sp(c).edit().putInt("quality", v).apply()
+    fun setQualityFps(c: Context, v: Int) = sp(c).edit().putInt("quality_fps", v).apply()
+    fun setIconSize(c: Context, artPx: Float, cols: Int) = sp(c).edit().putFloat("icon_art_px", artPx).putInt("icon_cols", cols).apply()
+    /** Settings that older versions saved and no longer exist (frame rate in percent, the separate wing transparency). */
+    fun dropOldKeys(c: Context) = sp(c).edit().remove("quality").remove("wing_transparency").apply()
     fun setParticlePct(c: Context, v: Int) = sp(c).edit().putInt("particles", v).apply()
     fun setTransparencyPct(c: Context, v: Int) = sp(c).edit().putInt("transparency", v).apply()
-    fun setWingTransPct(c: Context, v: Int) = sp(c).edit().putInt("wing_transparency", v).apply()
     fun setA11yConsent(c: Context, v: Boolean) = sp(c).edit().putBoolean("a11y_consent", v).apply()
     fun setEnabled(c: Context, v: Boolean) = sp(c).edit().putBoolean("enabled", v).apply()
     fun setWelcomeSeen(c: Context, v: Boolean) = sp(c).edit().putBoolean("welcome_seen", v).apply()
@@ -145,15 +159,37 @@ object DragonPalette {
         filter = if (hue == 0 && sat == 100) null else ColorMatrixColorFilter(matrix(hue, sat))
     }
 
-    /** A new random palette: hue turned 40..320 degrees, saturation 85..125%. Saved. */
+    private const val HISTORY = 10
+    private val history = ArrayDeque<IntArray>()          // the colours before each change: (hue, saturation), newest last, in memory only
+
+    /** True when the Back button has an earlier colour to go to. */
+    fun canBack() = history.isNotEmpty()
+
+    private fun remember() {
+        history.addLast(intArrayOf(hue, sat))
+        while (history.size > HISTORY) history.removeFirst()
+    }
+
+    /** A new random palette: hue turned 40..320 degrees, saturation 85..125%. Saved. The colour it replaces goes into the Back list. */
     fun randomize(c: Context) {
         val h = 40 + (Math.random() * 280).toInt()
         val s = 85 + (Math.random() * 40).toInt()
+        remember()
         use(h, s); Prefs.setDragonColors(c, hue, sat)
     }
 
-    /** Back to the original colours. Saved. */
-    fun reset(c: Context) { use(0, 100); Prefs.setDragonColors(c, 0, 100) }
+    /** One step back through the colours before the last changes (up to 10). Saved. Returns false when there is nothing to go back to. */
+    fun back(c: Context): Boolean {
+        val prev = history.removeLastOrNull() ?: return false
+        use(prev[0], prev[1]); Prefs.setDragonColors(c, hue, sat)
+        return true
+    }
+
+    /** Back to the original colours. Saved. The colour it replaces goes into the Back list. */
+    fun reset(c: Context) {
+        if (hue != 0 || sat != 100) remember()
+        use(0, 100); Prefs.setDragonColors(c, 0, 100)
+    }
 
     private fun matrix(h: Int, s: Int): ColorMatrix {
         val a = Math.toRadians(h.toDouble()); val cs = cos(a).toFloat(); val sn = sin(a).toFloat()
@@ -167,5 +203,37 @@ object DragonPalette {
         val satM = ColorMatrix(); satM.setSaturation(s / 100f)
         rot.postConcat(satM)
         return rot
+    }
+}
+
+/**
+ * The Quality slider's stops, in real frames per second. "Even" stops divide the screen's refresh rate exactly (every 1st, 2nd, 3rd ... vsync),
+ * so the frames come at an even pace. The in-between stops do not divide evenly: some frames last longer than others and the motion can judder.
+ */
+object FpsStops {
+    class Stop(val fps: Int, val even: Boolean)
+
+    /** The screen's top refresh rate at its current resolution (the same on every call, unlike the rate the screen runs at this moment). */
+    fun topHz(c: Context): Int = try {
+        val d = (c.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager).getDisplay(0)
+        val cur = d.mode
+        val best = d.supportedModes.filter { it.physicalWidth == cur.physicalWidth && it.physicalHeight == cur.physicalHeight }
+            .maxOfOrNull { it.refreshRate } ?: d.refreshRate
+        Math.round(best).coerceIn(30, 240)
+    } catch (_: Throwable) {
+        60
+    }
+
+    /** All stops for a screen of [hz], lowest first. */
+    fun stops(hz: Int): List<Stop> {
+        val even = ArrayList<Int>()
+        for (n in 1..10) if (hz % n == 0 && hz / n >= 9) even.add(hz / n)       // every n-th vsync, not below 9 fps
+        val grey = when (hz) {
+            120 -> listOf(80, 90, 100)
+            90 -> listOf(60, 75)
+            60 -> listOf(40, 50)
+            else -> listOf(hz * 2 to 3, hz * 5 to 6).mapNotNull { (n, d) -> if (n % d == 0) n / d else null }   // two thirds and five sixths, when whole
+        }.filter { it !in even }
+        return (even.map { Stop(it, true) } + grey.map { Stop(it, false) }).sortedBy { it.fps }
     }
 }

@@ -10,7 +10,8 @@ Home Dragon is a pet dragon that lives on your Android home screen. This page ex
 
 | What | Why | Where it goes |
 |---|---|---|
-| Accessibility service ("Home Dragon icon finder"), only after you agree in the app | Finds the position and size of your home-screen icons and notices when the home screen is in front, so the dragon can sit on icons and breathe fire at them | Used live in memory only. Not saved, not sent anywhere |
+| Accessibility service ("Home Dragon icon finder"), only after you agree in the app | Finds the position and size of your home-screen icons, reads the launcher's page dots to get the page number (only the two numbers in a label like "Page 2 of 5"), and notices when the home screen is in front, so the dragon can sit on icons and breathe fire at them | Used live in memory only (the icon layout of each page is kept in memory while the icon finder runs; the size of a normal icon is saved on the phone as a number). Not sent anywhere except as below |
+| Message to the Phone Status app (my other app, only if it is installed on the same phone) | Tells it whether the home screen is in front and which page you are on, so its widget only updates while you can see it | One message to that app's package on your phone. It carries "home or not", the page number and a short reason. No screen contents. It leaves the phone nowhere |
 | Display over other apps | Draws the dragon on top of your home screen | Nothing is collected |
 | Usage access (optional, switched on by you in Android settings) | Tells the dragon which app is in front, so it hides when you open another app. Only the name of the app in front is used | Used live in memory only. Not saved, not sent anywhere |
 | Notification | Shows the required "Dragon is on your home screen" notice while the dragon runs | Nothing is collected |

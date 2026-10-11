@@ -8,6 +8,7 @@ import java.io.File
 class App : Application() {
     override fun onCreate() {
         super.onCreate()
+        Prefs.dropOldKeys(this)                  // settings that no longer exist
         DragonPalette.load(this)                 // the saved dragon colours, before any dragon is drawn
         Diag.log(this, "App process started")
         val previous = Thread.getDefaultUncaughtExceptionHandler()

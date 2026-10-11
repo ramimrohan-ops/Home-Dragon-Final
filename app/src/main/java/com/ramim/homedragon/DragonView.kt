@@ -30,6 +30,9 @@ import kotlin.math.sin
 import kotlin.random.Random
 
 private const val TAU = (2.0 * PI).toFloat()
+
+/** The dragon fades back in this long after the screen stopped moving (the icon scan runs earlier, after 0.5 s, while it is still hidden). */
+private const val APPEAR_MS = 1000L
 private fun rnd(a: Float, b: Float) = a + Random.nextFloat() * (b - a)
 private fun clampF(v: Float, a: Float, b: Float) = max(a, min(b, v))
 private fun lerp3(a: Float, b: Float, t: Float) = a + (b - a) * t
@@ -324,9 +327,8 @@ class DragonView(context: Context) : View(context) {
     // ---------- page swipe fade ----------
     private var fade = 1f
     private var fadeGoal = 1f
-    private var swipeState = 0       // 0 idle, 1 swiping, 2 settled and waiting for the new page's icons
-    private var swipeLast = 0L
-    private var settleAt = 0L
+    private var swipeState = 0       // 0 idle, 1 swiping, 2 stopped moving: waiting for the new page's icons and for the 1 s to pass
+    private var swipeLast = 0L       // the last moment the screen was moving (uptime ms)
 
     private var hiddenByApp = false
     private var hiddenNotified = false
@@ -339,8 +341,8 @@ class DragonView(context: Context) : View(context) {
         hiddenByApp = !shown
         hiddenNotified = false
         if (shown) {
-            // back on the home screen: wait for the fresh icon layout, then fade in (see applyIcons)
-            swipeState = 2; settleAt = SystemClock.uptimeMillis(); fadeGoal = 0f
+            // back on the home screen (the 1 s of stillness has already passed): take the fresh icon layout, then fade in (see applyIcons)
+            swipeState = 2; swipeLast = SystemClock.uptimeMillis() - APPEAR_MS; fadeGoal = 0f
         }
     }
 
@@ -485,7 +487,8 @@ class DragonView(context: Context) : View(context) {
 
     // ---------- user settings (percent sliders in the app) ----------
     private var pq = 1f             // particle quality 0.1..1 (fire, smoke, sparks), separate from the frame-rate Quality
-    private var q = 1f              // quality 0.1..1
+    private var fpsWanted = 120     // Quality slider: frames per second
+    private var fpsTop = 120        // the screen's top refresh rate (the Quality slider's last stop)
     private var spdMul = 1f         // dragon speed 0.5..1.5
     private var capF = 200
     private var capS = 60
@@ -500,14 +503,15 @@ class DragonView(context: Context) : View(context) {
     private var lastVsyncNs = 0L
 
     private fun loadSettings() {
-        q = clampF(Prefs.qualityPct(context) / 100f, 0.1f, 1f)
+        fpsWanted = Prefs.qualityFps(context); fpsTop = FpsStops.topHz(context)
         pq = clampF(Prefs.particlePct(context) / 100f, 0.1f, 1f)
         chargeT = Prefs.chargeTenths(context) / 10f
         chargeQ = clampF(Prefs.chargeQualityPct(context) / 100f, 0.1f, 1f)
         chargeThick = clampF(Prefs.chargeThickPct(context) / 100f, 0.5f, 2f)
         spdMul = clampF(Prefs.speedPct(context) / 100f, 0.5f, 1.5f)
         // transparency: 0 = solid .. 100 = barely visible; the model draws the whole dragon as one fading layer
-        model.setTransparency(Prefs.transparencyPct(context), Prefs.wingTransPct(context))
+        val body = Prefs.transparencyPct(context)
+        model.setTransparency(body, Prefs.wingOf(body))      // the wing skin is 10 points more see-through
         capF = (70 + 130 * pq).toInt().coerceIn(70, maxF)
         capS = (20 + 40 * pq).toInt().coerceIn(20, maxS)
         capP = (30 + 60 * pq).toInt().coerceIn(30, maxP)
@@ -515,11 +519,11 @@ class DragonView(context: Context) : View(context) {
         reloadFlame()
     }
 
-    /** Frames per second wanted right now: refresh rate x Quality, the same in every state. */
+    /** Frames per second wanted right now: the Quality slider's rate (every vsync at its top stop), the same in every state. */
     private fun pickRate(): Float {
         val hz = clampF(1f / vsyncDt, 30f, 165f)
-        val base = if (q >= 0.995f) 1000f else max(5f, hz * q)     // 100% = every vsync, no throttling
-        // walking is capped at 60 fps (Quality 50% and above all give 60); fly, jump and fire keep the full rate
+        val base = if (fpsWanted >= fpsTop || fpsWanted >= hz * 0.995f) 1000f else fpsWanted.toFloat()     // the top stop = every vsync, no throttling
+        // walking never needs more than 60 fps; fly, jump and fire keep the full rate
         val moving = if (mode == Mode.WALK) min(base, 60f) else base
         return if (restCalm) min(moving, 30f) else moving
     }
@@ -539,6 +543,16 @@ class DragonView(context: Context) : View(context) {
         return s[(s.size * 0.4f).toInt().coerceIn(0, s.size - 1)]
     }
 
+    private var savedIconPx = 0f
+
+    /** Remembers the normal icon size (and icons per row) for the preview box on the main screen: it draws its dummy icons that size. Written only when it changed. */
+    private fun saveIconSize() {
+        if (size <= 0f || width <= 0 || abs(size - savedIconPx) < 1f) return
+        savedIconPx = size
+        val cols = Math.round(width / (size / 0.73f)).coerceIn(3, 7)         // the icon cell is about 1/0.73 of the icon picture wide
+        Prefs.setIconSize(context, size, cols)
+    }
+
     private fun applyScale() {
         loadSettings()
         val m = iconWidth(icons.map { it.r.width() })
@@ -548,6 +562,7 @@ class DragonView(context: Context) : View(context) {
             if (++lockStreak >= 3) { lockSize = m; lockStreak = 0 }                 // the launcher grid really changed: take the new size
         } else lockStreak = 0
         size = lockSize
+        saveIconSize()
         for (c in icons) c.big = c.r.width() > size * 1.5f
         sc = size / 58f
         ds = sc * 0.55f * (Prefs.scalePct(context) / 100f)
@@ -564,8 +579,7 @@ class DragonView(context: Context) : View(context) {
                 abs(sorted[it].left - icons[it].r.left) < 1.5f && abs(sorted[it].top - icons[it].r.top) < 1.5f
             }
         ) {
-            if (settling) { swipeState = 0; fadeGoal = 1f }   // same page again: fade back in where it was
-            return
+            return                                             // same page again: it fades back in where it was, once the 1 s is over
         }
 
         val avg = medianWidth(rects.map { it.width() })
@@ -592,8 +606,7 @@ class DragonView(context: Context) : View(context) {
             // A different home screen: the dragon appears on one of its icons with a fade-in.
             nf = 0; ns = 0; nk = 0
             land(Random.nextInt(icons.size), true)
-            if (!settling) fade = 0f         // launcher sent no scroll events: still hide the jump
-            swipeState = 0; fadeGoal = 1f
+            if (!settling) { fade = 0f; fadeGoal = 1f }         // launcher sent no scroll events: still hide the jump
         } else if (mode == Mode.IDLE || mode == Mode.CROUCH || mode == Mode.SLEEP || mode == Mode.SCRATCH) {
             val ni = nearestIcon(st.x, st.y)
             val nc = ic(ni)
@@ -907,8 +920,8 @@ class DragonView(context: Context) : View(context) {
     // ---------- per-frame update ----------
     private fun step(rdt: Float) {
         val now = SystemClock.uptimeMillis()
-        if (swipeState == 1 && now - swipeLast > 120L) { swipeState = 2; settleAt = now }
-        else if (swipeState == 2 && now - settleAt > 450L) { swipeState = 0; fadeGoal = 1f }
+        if (swipeState == 1 && now - swipeLast > 120L) { swipeState = 2 }
+        else if (swipeState == 2 && now - swipeLast >= APPEAR_MS) { swipeState = 0; fadeGoal = 1f }      // the dragon appears 1 s after the screen stopped moving
         val fadeTarget = if (hiddenByApp) 0f else fadeGoal
         // No fade-out: the dragon just disappears. Fade-in: 0.4 s, eased in onDraw.
         fade = if (fadeTarget < fade) fadeTarget else clampF(fade + rdt / 0.4f, 0f, fadeTarget)
