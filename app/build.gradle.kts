@@ -11,8 +11,8 @@ android {
         applicationId = "com.ramim.homedragon"
         minSdk = 29
         targetSdk = 36
-        versionCode = 79
-        versionName = "4.23"
+        versionCode = 80
+        versionName = "4.24"
     }
 
     // Fixed debug key so every new build installs over the previous one without uninstalling.

@@ -209,6 +209,7 @@ class DragonView(context: Context) : View(context) {
     private val bugEdge = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 0.8f; strokeCap = Paint.Cap.ROUND }
     private val bugLeg = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 0.9f; strokeCap = Paint.Cap.ROUND }
     private val bugR = RectF()
+    private val bugHornP = Path()
     private val bugMark = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }                       // spots on the back
     private val bugShadow = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = Color.BLACK }
     private val bugEye = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = Color.rgb(20, 16, 18) }
@@ -664,10 +665,16 @@ class DragonView(context: Context) : View(context) {
     private var lockW = 0
     private var lockH = 0
 
-    /** Width of a normal app icon on this page: a low percentile, so widgets and big folders do not pull it up. */
+    /**
+     * Width of a normal app icon on this page, 0 when the page has none (only widgets). A normal icon's rectangle is under 30% of the screen width (208 px of 1220);
+     * a widget covering two grid cells is 572 px. Of those, the group around the 20th percentile counts, so a few odd rectangles do not move it.
+     */
     private fun iconWidth(list: List<Float>): Float {
-        val s = list.sorted()
-        return s[(s.size * 0.4f).toInt().coerceIn(0, s.size - 1)]
+        val n = list.filter { it <= width * 0.3f }.sorted()
+        if (n.isEmpty()) return 0f
+        val ref = n[(n.size - 1) / 5]
+        val cl = n.filter { it >= ref * 0.8f && it <= ref * 1.2f }
+        return cl[cl.size / 2]
     }
 
     private var savedIconPx = 0f
@@ -684,13 +691,21 @@ class DragonView(context: Context) : View(context) {
         loadSettings()
         if (icons.isEmpty()) return
         val m = iconWidth(icons.map { it.r.width() })
+        val old = lockSize
         if (lockSize <= 0f || width != lockW || height != lockH) {
-            lockSize = m; lockStreak = 0; lockW = width; lockH = height            // first page, or the screen changed (rotation, resize)
-        } else if (m > lockSize * 1.08f && m <= lockSize * 1.3f) {
-            lockSize = m; lockStreak = 0                                            // bigger icons: the earlier scan came during an animation (those are always smaller)
-        } else if (m > lockSize * 1.08f || m < lockSize * 0.92f) {
-            if (++lockStreak >= (if (m > lockSize * 1.3f) 3 else 2)) { lockSize = m; lockStreak = 0 }     // smaller (or far bigger, maybe a widget-heavy page): only after repeated scans
-        } else lockStreak = 0
+            // first page after the start: the size saved last time (the first scan can come during a launcher animation, with icons 9 - 14% too small); after a rotation or resize: this page
+            val saved = Prefs.iconArtPx(context)
+            lockSize = if (lockW == 0 && saved >= width * 0.1f && saved <= width * 0.3f) saved else if (m > 0f) m else width * 0.17f
+            lockStreak = 0; lockW = width; lockH = height
+        }
+        if (m > 0f) {
+            if (m > lockSize * 1.08f && m <= lockSize * 1.3f) {
+                lockSize = m; lockStreak = 0                                        // bigger icons: the earlier scan came during an animation (those are always smaller)
+            } else if (m > lockSize * 1.08f || m < lockSize * 0.92f) {
+                if (++lockStreak >= 4) { lockSize = m; lockStreak = 0 }             // smaller, or far bigger: only when 4 different layouts in a row say so
+            } else lockStreak = 0
+        }
+        if (abs(lockSize - old) >= 1f) dlog("Size: " + old.toInt() + " -> " + lockSize.toInt() + " px (icons on this page " + m.toInt() + " px)")
         size = lockSize
         saveIconSize()
         for (c in icons) c.big = c.r.width() > size * 1.5f
@@ -733,7 +748,7 @@ class DragonView(context: Context) : View(context) {
         run {
             val ni0 = icons.firstOrNull { !it.big }; val wi0 = icons.firstOrNull { it.big }
             val gl = "Ground: icon " + (ni0?.let { "${it.r.width().toInt()}x${it.r.height().toInt()}" } ?: "-") + " px, widget " +
-                (wi0?.let { "${it.r.width().toInt()}x${it.r.height().toInt()}" } ?: "-") + " px, screen $width px, dragon size ${size.toInt()} px, 1 unit = " + "%.2f".format(ds) + " px, corner " + (ni0?.let { cornerR(it).toInt() } ?: 0) + " px, card inset ${(wi0?.pad ?: 0f).toInt()} px (this widget)"
+                (wi0?.let { "${it.r.width().toInt()}x${it.r.height().toInt()}" } ?: "-") + " px, screen $width px, dragon size ${size.toInt()} px, 1 unit = " + "%.2f".format(ds) + " px, corner " + (width * CORNER_FRAC).toInt() + " px, card inset ${(wi0?.pad ?: 0f).toInt()} px (this widget)"
             if (gl != lastGroundLog) { lastGroundLog = gl; dlog(gl) }
         }
         if (bugOn) {
@@ -798,19 +813,12 @@ class DragonView(context: Context) : View(context) {
         }
     }
 
-    /** Corner radius of [c]: the measured icon radius; a low wide widget is a pill (radius half its height). */
-    private fun cornerR(c: Icon): Float {
-        val r0 = max(size * 0.25f, width * CORNER_FRAC)
-        val cardH = c.r.height() - 2.1f * c.pad                                 // a whole-cell rectangle also covers the label below the card
-        return if (c.big && cardH <= r0 * 4.2f) cardH * 0.5f else r0
-    }
-
-    /** How far in from each end a foot or the bug must stand: about half a corner radius (there the surface is only a few px lower). */
-    private fun edgeIn(c: Icon) = cornerR(c) * 0.55f
+    /** How far in from each end a foot or the bug must stand: about half a corner radius (there the surface is only a few px lower). Icons and widgets all have the same radius. */
+    private fun edgeIn() = width * CORNER_FRAC * 0.55f
 
     /** Where the dragon's origin may stand on big surface [c], world x (wbLo..wbHi): both feet on it, [edgeIn] from each end, whichever way it faces, and the dragon on screen. */
     private fun walkBounds(c: Icon) {
-        val e = edgeIn(c); val reach = FOOT_REACH * ds
+        val e = edgeIn(); val reach = FOOT_REACH * ds
         wbLo = max(groundL(c) + e + reach, 90f * ds)
         wbHi = min(groundR(c) - e - reach, width - 90f * ds)
     }
@@ -966,7 +974,7 @@ class DragonView(context: Context) : View(context) {
     private fun sleepSpot(): Boolean {
         val c = ic(iconIdx)
         if (!c.big || air) return false
-        val head = 70f * ds + 4f + edgeIn(c); val tailEdge = 110f * ds; val tailScreen = 146f * ds + 4f
+        val head = 70f * ds + 4f + edgeIn(); val tailEdge = 110f * ds; val tailScreen = 146f * ds + 4f
         val faces = floatArrayOf(faceT, -faceT)
         for (f in faces) {
             val lo: Float; val hi: Float
@@ -1030,7 +1038,7 @@ class DragonView(context: Context) : View(context) {
      */
     private fun bugRangeFor(i: Int, side: Float) {
         val c = ic(i)
-        val m = max(BUG_EDGE_MARGIN, edgeIn(c) + 3f)
+        val m = max(BUG_EDGE_MARGIN, edgeIn() + 3f)
         var lo = groundL(c) + m; var hi = groundR(c) - m
         if (!air && iconIdx == i) {
             if (side > 0f) { lo = max(lo, st.x + BUG_FRONT * ds); lo = min(lo, hi - BUG_MIN_ROOM * ds); lo = max(lo, st.x + 24f * ds) }
@@ -1760,6 +1768,8 @@ class DragonView(context: Context) : View(context) {
         bugR.set(-6.4f, -2.7f, -0.6f, 2.7f); c.drawOval(bugR, bugFill); c.drawOval(bugR, bugEdge)          // abdomen
         bugR.set(-1.6f, -2.1f, 2.9f, 2.1f); c.drawOval(bugR, bugFill); c.drawOval(bugR, bugEdge)           // thorax
         c.drawCircle(4.1f, 0f, 1.7f, bugFill); c.drawCircle(4.1f, 0f, 1.7f, bugEdge)                       // head
+        bugHornP.reset(); bugHornP.moveTo(5.2f, -0.55f); bugHornP.lineTo(7.2f, 0f); bugHornP.lineTo(5.2f, 0.55f); bugHornP.close()
+        c.drawPath(bugHornP, bugFill); c.drawPath(bugHornP, bugEdge); c.drawCircle(7.0f, 0f, 0.28f, bugMark)    // small horn between the antennae
         if (bugPat == 1) {
             c.drawLine(-5.2f, -1.5f, -5.2f, 1.5f, bugLeg); c.drawLine(-3.5f, -2.2f, -3.5f, 2.2f, bugLeg); c.drawLine(-1.8f, -1.5f, -1.8f, 1.5f, bugLeg)
         } else if (bugPat == 2) {
@@ -1807,6 +1817,8 @@ class DragonView(context: Context) : View(context) {
         bugR.set(-1.6f, -2.0f, 2.9f, 2.2f); c.drawOval(bugR, bugFill); c.drawOval(bugR, bugEdge)
         c.drawLine(-5.2f, -1.4f, -5.2f, 1.6f, bugEdge); c.drawLine(-3.6f, -2.0f, -3.6f, 2.2f, bugEdge); c.drawLine(-2.0f, -1.4f, -2.0f, 1.6f, bugEdge)     // belly segments
         c.drawCircle(4.1f, 0.4f, 1.6f, bugFill); c.drawCircle(4.1f, 0.4f, 1.6f, bugEdge)
+        bugHornP.reset(); bugHornP.moveTo(5.3f, -0.15f); bugHornP.lineTo(7.0f, 0.2f); bugHornP.lineTo(5.3f, 0.75f); bugHornP.close()
+        c.drawPath(bugHornP, bugFill); c.drawPath(bugHornP, bugEdge)
         for (q in 0 until 2) {
             val ey = if (q == 0) -0.5f else 1.3f
             c.drawLine(4.4f, ey - 0.35f, 5.1f, ey + 0.35f, bugEye); c.drawLine(4.4f, ey + 0.35f, 5.1f, ey - 0.35f, bugEye)             // x eyes

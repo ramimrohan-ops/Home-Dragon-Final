@@ -472,13 +472,6 @@ class MasterPreview(context: Context) : View(context) {
 
         layoutDragon(w, h)
 
-        // the icon the fire lands on lights up with the heat
-        if (heat > 0.02f) {
-            val gi = ((1f - heat) * 4f).toInt()
-            sprite(c, gi, icx, icy, icSize * (1.1f + 0.5f * heat), heat)
-            sprite(c, 0, icx, icy, icSize * 0.6f * heat, heat * 0.8f)
-        }
-
         // scale bar: sitting only; it is the dragon's width at 100%
         if (!flyPose) {
             val area = h - dp(46f)
@@ -494,13 +487,20 @@ class MasterPreview(context: Context) : View(context) {
             textFill.textAlign = Paint.Align.CENTER
         }
 
-        // the dragon (Android 12+ makes this kind of overlay window 20% see-through, so the most solid it can be is 80%: shown the same here)
+        // The whole overlay window (dragon, fire, glow) is one layer: Android 12+ makes it 20% see-through, so the most solid it can be is 80%.
+        // Drawn into a transparent layer first, the additive fire behaves as it does on the home screen, not as on this solid background.
         model.setTransparency(bodyT, Prefs.wingOf(bodyT))
         val capped = android.os.Build.VERSION.SDK_INT >= 31
         val sv = if (capped) c.saveLayerAlpha(0f, 0f, w, h, (0.8f * 255f).toInt()) else 0
-        model.draw(c, st)
-        if (capped) c.restoreToCount(sv)
 
+        // the icon the fire lands on lights up with the heat
+        if (heat > 0.02f) {
+            val gi = ((1f - heat) * 4f).toInt()
+            sprite(c, gi, icx, icy, icSize * (1.1f + 0.5f * heat), heat)
+            sprite(c, 0, icx, icy, icSize * 0.6f * heat, heat * 0.8f)
+        }
+
+        model.draw(c, st)
         drawCharge(c)
 
         // flames of the breath
@@ -513,6 +513,7 @@ class MasterPreview(context: Context) : View(context) {
             sprite(c, 1, mx, my, dp(13f) * mouth, 0.8f * mouth)
             sprite(c, 0, mx, my, dp(6f) * mouth, 0.9f * mouth)
         }
+        if (capped) c.restoreToCount(sv)
 
         drawOverlay(c, w, h)
         c.restore()

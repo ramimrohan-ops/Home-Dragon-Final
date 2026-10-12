@@ -537,3 +537,13 @@ Review before the build: no crash risk found (the `!!` uses are assigned just be
 
 - **Log line "Ground:"** now shows the inset of the first widget on the page ("card inset N px (this widget)").
 - Not proven on the phone: the spawn rate, the 0.2 s wait, the inset on other widgets.
+
+## v4.24 - same fire in the app, one dragon size on every page, one corner radius, bug horn
+| Change | Cause | Now |
+|---|---|---|
+| Fire in the app preview looked stronger than on the home screen | Android 12+ makes the overlay window 20% see-through (80% at most). The preview applied that only to the dragon body; fire, charge-up, mouth flare and icon glow were drawn at 100% on a solid background (the additive fire glows there) | The dragon, the fire and the glow are drawn into one transparent layer, then shown at 80%, the same as the overlay window. The scale bar and the buttons stay outside. |
+| Dragon size differed between pages | The size came from a 40th percentile of all rectangles on the page (a widget could count as an icon) and changed on any page that measured 8% off | Only normal icons count (rectangle under 30% of the screen width); the group around the 20th percentile is used; a page with only widgets keeps the size. The size saved last time is the start value. Bigger icons (8 - 30%) are taken at once, smaller ones or far bigger ones only after 4 layouts in a row. New Log line "Size: A -> B px". |
+| Corner radius | 25% of the dragon size (or 4% of the screen width, whichever is bigger) and a "pill" rule for low wide widgets | One radius for icons and widgets: 4% of the screen width (about 49 px). The pill rule and the size term are removed. |
+| Bug | - | A small horn between the antennae (also on the dead and waking bug). Looks only: size, speed and hit area are unchanged. |
+
+- Not proven on the phone: the fire match, the size on every page, the horn size.
