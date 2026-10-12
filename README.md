@@ -508,3 +508,17 @@ Measured from five screenshots (phone 1220 x 2712): icon picture about 195 px (1
 
 - **Log:** a "Ground: icon WxH px, widget WxH px, screen W px, 1 unit = N px, corner N px" line whenever the layout changes. It shows whether the icon rectangle the finder reports is the picture or a wider cell.
 - Not changed: the dragon on a normal icon (it stands in the middle). Not proven on the phone: the inset (about 27 px), the pill rule, the 16% picture guess.
+
+## v4.22 - fixes from the Log: widget card inset, dragon size follows the real icon size
+Found in the Log of 4.21 (screen 1220 px): `Ground: icon 208x208 px, widget 572x580 px` and `corner 48 px`.
+
+| Finding | Cause | Fix |
+|---|---|---|
+| The dragon still stood past the edge of widgets | The finder's widget rectangle covers whole grid cells: 572 px wide for two cells, but the visible card is 484 px. The card lines up with the icon pictures, so it is about **45 px narrower on each side** (and the rectangle also covers the label below the card). | New `padX` = (distance between two neighbouring icons - icon picture) / 2, measured on the page (if a page has no two neighbouring icons: a guess of 23% of the screen width). The ground of a widget or big folder is now the **card**: feet, sleeping spot, walking, landing, stalking and the bug all use it. |
+| "Ask" pill treated as an ordinary card | The pill test used the rectangle height, which includes the label | The test uses the card height (rectangle height - 2.1 x padX). |
+| The dragon was about 13% smaller than the icons say | The size was locked from the first scan (180 px, taken during an animation); the real icons are 208 px and the lock only changed after a 20% difference | The lock now follows after **two scans in a row** that differ by more than 8% (was three, 20%). The dragon grows to the true size set by the Scale slider (80% in your Log: 1 unit was 1.37 px, it will be about 1.58 px). Lower the Scale slider to about 70% to keep the old look. |
+| 12 - 18 s from "noticed" to "burnt" in the Log | Unknown: expected about 5 s with a 60% chance to jump on | The Log now says **"Bug: burnt (N jumps, S s after it was noticed)"** so the next Log shows whether the chain is just long or something loops. |
+
+- **Log line "Ground:"** now also shows the dragon size and the card inset.
+- Seen in the Log and left alone: the page-2 scan at 19:32:26 came while the launcher was still animating (icons 190 px, 91% of 208); the next scan 4 s later fixed it. A second scan is not added (your rule).
+- Not proven on the phone: the 45 px inset on other launchers' widgets, the relock threshold.

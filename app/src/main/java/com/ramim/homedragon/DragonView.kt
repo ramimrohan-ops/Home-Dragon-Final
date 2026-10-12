@@ -191,8 +191,11 @@ class DragonView(context: Context) : View(context) {
     private var bugJumpT = 3f              // seconds until the bug jumps to another icon or widget by itself
     private var huntOn = false             // the dragon is after the bug (flying to it, or next to it)
     private var stalkNow = false           // the dragon is running along a widget after the bug
+    private var padX = 0f                  // the finder's rectangle of a widget or big folder is wider than the visible card: this much on each side (see updatePad)
     private var wbLo = 0f; private var wbHi = 0f                 // where the dragon may stand on a big surface, world x (see walkBounds)
     private var lastGroundLog = ""
+    private var huntJumps = 0              // jumps the bug made since the dragon noticed it, and when it noticed (for the Log)
+    private var huntT0 = 0L
     private var rgLo = 0f; private var rgHi = 0f                 // the bug's ground, world x (see bugRangeFor)
     private var bugSmoke = 0f
     private var bugH = 0f; private var bugS = 0.8f; private var bugV = 0.8f      // the bug's colour (hue, saturation, value): new every time it appears
@@ -677,12 +680,13 @@ class DragonView(context: Context) : View(context) {
         val m = iconWidth(icons.map { it.r.width() })
         if (lockSize <= 0f || width != lockW || height != lockH) {
             lockSize = m; lockStreak = 0; lockW = width; lockH = height            // first page, or the screen changed (rotation, resize)
-        } else if (abs(m - lockSize) > lockSize * 0.2f) {
-            if (++lockStreak >= 3) { lockSize = m; lockStreak = 0 }                 // the launcher grid really changed: take the new size
+        } else if (abs(m - lockSize) > lockSize * 0.08f) {
+            if (++lockStreak >= 2) { lockSize = m; lockStreak = 0 }                 // two scans in a row differ: the icon size really is another (the first scan can come during an animation)
         } else lockStreak = 0
         size = lockSize
         saveIconSize()
         for (c in icons) c.big = c.r.width() > size * 1.5f
+        updatePad()
         sc = size / 58f
         ds = sc * 0.55f * (Prefs.scalePct(context) / 100f)
         st.ds = ds
@@ -721,7 +725,7 @@ class DragonView(context: Context) : View(context) {
         run {
             val ni0 = icons.firstOrNull { !it.big }; val wi0 = icons.firstOrNull { it.big }
             val gl = "Ground: icon " + (ni0?.let { "${it.r.width().toInt()}x${it.r.height().toInt()}" } ?: "-") + " px, widget " +
-                (wi0?.let { "${it.r.width().toInt()}x${it.r.height().toInt()}" } ?: "-") + " px, screen $width px, 1 unit = " + "%.2f".format(ds) + " px, corner " + (ni0?.let { cornerR(it).toInt() } ?: 0) + " px"
+                (wi0?.let { "${it.r.width().toInt()}x${it.r.height().toInt()}" } ?: "-") + " px, screen $width px, dragon size ${size.toInt()} px, 1 unit = " + "%.2f".format(ds) + " px, corner " + (ni0?.let { cornerR(it).toInt() } ?: 0) + " px, card inset ${padX.toInt()} px"
             if (gl != lastGroundLog) { lastGroundLog = gl; Diag.log(context, gl) }
         }
         if (bugOn) {
@@ -760,13 +764,30 @@ class DragonView(context: Context) : View(context) {
     // ---------- footing (v4.21): feet and bug on the flat part, not over the rounded corners ----------
 
     /** Left and right end of the ground of [c]: a big surface is its whole width; a normal icon is its picture (never wider than the picture is on this screen). */
-    private fun groundL(c: Icon) = if (c.big) c.r.left else c.cx - min(c.r.width(), width * PIC_FRAC) / 2f
-    private fun groundR(c: Icon) = if (c.big) c.r.right else c.cx + min(c.r.width(), width * PIC_FRAC) / 2f
+    private fun groundL(c: Icon) = if (c.big) c.r.left + padX else c.cx - min(c.r.width(), width * PIC_FRAC) / 2f
+    private fun groundR(c: Icon) = if (c.big) c.r.right - padX else c.cx + min(c.r.width(), width * PIC_FRAC) / 2f
+
+    /**
+     * A widget's rectangle covers whole grid cells (measured: 572 px for two cells, the visible card 484 px), and the card lines up with the icon pictures on both sides:
+     * padX = (distance between two neighbouring icons - icon picture) / 2, about 45 px. The distance is measured on this page, or guessed from the screen width.
+     */
+    private fun updatePad() {
+        val gaps = ArrayList<Float>()
+        val norm = icons.filter { !it.big }.sortedWith(compareBy({ it.row }, { it.cx }))
+        for (k in 1 until norm.size) {
+            if (norm[k].row != norm[k - 1].row) continue
+            val d = norm[k].cx - norm[k - 1].cx
+            if (d > size * 0.8f && d < size * 2.2f) gaps.add(d)
+        }
+        val pitch = if (gaps.isNotEmpty()) gaps.sorted()[gaps.size / 2] else width * 0.2344f
+        padX = clampF((pitch - min(size, width * PIC_FRAC)) / 2f, 0f, width * 0.06f)
+    }
 
     /** Corner radius of [c]: the measured icon radius; a low wide widget is a pill (radius half its height). */
     private fun cornerR(c: Icon): Float {
         val r0 = max(size * 0.25f, width * CORNER_FRAC)
-        return if (c.big && c.r.height() <= r0 * 4.2f) c.r.height() * 0.5f else r0
+        val cardH = c.r.height() - 2.1f * padX                                  // the rectangle also covers the label below the card
+        return if (c.big && cardH <= r0 * 4.2f) cardH * 0.5f else r0
     }
 
     /** How far in from each end a foot or the bug must stand: about half a corner radius (there the surface is only a few px lower). */
@@ -934,8 +955,8 @@ class DragonView(context: Context) : View(context) {
         val faces = floatArrayOf(faceT, -faceT)
         for (f in faces) {
             val lo: Float; val hi: Float
-            if (f > 0f) { lo = max(c.r.left + tailEdge, tailScreen); hi = min(c.r.right - head, width - head) }
-            else { lo = max(c.r.left + head, head); hi = min(c.r.right - tailEdge, width - tailScreen) }
+            if (f > 0f) { lo = max(groundL(c) + tailEdge, tailScreen); hi = min(groundR(c) - head, width - head) }
+            else { lo = max(groundL(c) + head, head); hi = min(groundR(c) - tailEdge, width - tailScreen) }
             if (lo > hi) continue
             val x = clampF(st.x, lo, hi)
             if (abs(x - st.x) > 26f * sc * 3.4f) continue            // too far to walk there in about three seconds
@@ -1033,7 +1054,7 @@ class DragonView(context: Context) : View(context) {
         do { bugGoalX = lo + (hi - lo) * Random.nextFloat() } while (abs(bugGoalX - bugWx) < minStep && ++n < 12)
     }
 
-    private fun killBug() { bugSt = BUG_DEAD; bugT = 0f; bugMoving = false; bugSmoke = 0f; fgHit = true; Diag.log(context, "Bug: burnt") }
+    private fun killBug() { bugSt = BUG_DEAD; bugT = 0f; bugMoving = false; bugSmoke = 0f; fgHit = true; Diag.log(context, "Bug: burnt (" + huntJumps + " jumps, " + "%.1f".format((SystemClock.uptimeMillis() - huntT0) / 1000f) + " s after it was noticed)") }
     private fun reviveBug() { bugSt = BUG_FLIP; bugT = 0f; bugMoving = false }
 
     /** The icon the bug is on, or is jumping to; and the x it is at or will land on. */
@@ -1140,6 +1161,7 @@ class DragonView(context: Context) : View(context) {
         bugSt = BUG_JUMP; bugT = 0f; bugMoving = false; bugFlee = false
         bugDir = if (lx >= bugWx) 1f else -1f
         bugAirX = bugWx; bugAirY = bugWy
+        if (huntOn) huntJumps++
         return true
     }
 
@@ -1364,7 +1386,7 @@ class DragonView(context: Context) : View(context) {
         if (bugOn && (mode == Mode.IDLE || (mode == Mode.WALK && !sleepAfterWalk)) && (bugSt == BUG_ALIVE || bugSt == BUG_JUMP) && fade >= 0.99f && !hiddenByApp) {
             bugNoticeT -= dt                                            // counted only while the dragon is awake and idle
             if (bugNoticeT <= 0f) {
-                if (!huntOn) { fgWillRevive = Random.nextFloat() < REVIVE_CHANCE; fgRevived = false; Diag.log(context, "Bug: the dragon noticed it") }
+                if (!huntOn) { fgWillRevive = Random.nextFloat() < REVIVE_CHANCE; fgRevived = false; huntJumps = 0; huntT0 = SystemClock.uptimeMillis(); Diag.log(context, "Bug: the dragon noticed it") }
                 startHunt()
             }
         }
