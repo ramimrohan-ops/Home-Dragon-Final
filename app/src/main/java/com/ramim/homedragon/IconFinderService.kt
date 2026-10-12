@@ -26,6 +26,10 @@ private const val SETTLE_MS = 500L
 /** The page bar is read once, this long after the last window change, swipe or scroll, screen on / unlock, or Home Dragon app open / close. */
 private const val BAR_READ_MS = 400L
 
+/** After a window change that lands on the launcher without a visible page bar, the bar is read again every [POLL_MS], [POLL_READS] times, then never again. */
+private const val POLL_MS = 1000L
+private const val POLL_READS = 5
+
 /** A Run / Don't run change is held this long before it is sent; if the state is back to the last sent one by then, nothing is sent. */
 private const val SEND_HOLD_MS = 400L
 
@@ -41,7 +45,8 @@ private const val VERIFY_MAX = 3
  *
  * The home screen counts as "on top" only when the launcher is the top application window AND its page bar with the two page
  * numbers is VISIBLE to the user. No visible bar: nothing is scanned, the dragon is hidden and Phone Status hears "don't run".
- * The page bar is read once, 0.4 s after a window change, swipe, screen on or Home Dragon app open / close. There is no polling.
+ * The page bar is read 0.4 s after a window change, swipe, screen on or Home Dragon app open / close. While the launcher is on top without a
+ * visible bar it is read once a second for 5 seconds after the last window change, then never again.
  */
 class IconFinderService : AccessibilityService() {
 
@@ -248,6 +253,7 @@ class IconFinderService : AccessibilityService() {
         IconRegistry.modeChanged = null
         IconRegistry.light = false
         handler.removeCallbacks(barRead)
+        stopPoll()
         IconRegistry.recheckNow = null
         IconRegistry.serviceActive = false
         IconRegistry.icons = emptyList()
@@ -374,6 +380,30 @@ class IconFinderService : AccessibilityService() {
 
     private val barRead = Runnable { recheckHome() }
 
+    // ---- short poll: the launcher is on top but its page bar is not visible (yet): read the bar every second, 5 times, then stop ----
+    private var pollLeft = 0
+    private val pollRead = Runnable {
+        val launcher = IconRegistry.launcherPkg
+        val wanted = IconRegistry.serviceActive && !IconRegistry.onHome && !IconRegistry.idle && !DragonService.appOpen && launcher != null &&
+            front()?.pkg == launcher
+        if (!wanted) { pollLeft = 0; return@Runnable }       // home found, another app on top, screen off: stop
+        recheckHome()
+        pollLeft--
+        if (pollLeft > 0 && !IconRegistry.onHome) handler.postDelayed(pollRead, POLL_MS)
+    }
+
+    /** A window change that may land on the launcher: poll for 5 s (restarts on every new window change). */
+    private fun startPoll() {
+        handler.removeCallbacks(pollRead)
+        pollLeft = POLL_READS
+        handler.postDelayed(pollRead, POLL_MS)
+    }
+
+    private fun stopPoll() {
+        handler.removeCallbacks(pollRead)
+        pollLeft = 0
+    }
+
     /** One page-bar read in [BAR_READ_MS]; every new trigger restarts the wait. */
     private fun scheduleBarRead() {
         handler.removeCallbacks(barRead)
@@ -473,17 +503,19 @@ class IconFinderService : AccessibilityService() {
 
     /**
      * A window changed. Another app (or the Home Dragon app) in front is known from the window list at once: not home, no waiting.
-     * The launcher in front needs its page bar read: once, 0.4 s after the last change.
+     * The launcher in front needs its page bar read: 0.4 s after the last change, then every second for 5 s while no visible bar is found.
      */
     private fun onWindowChange(launcher: String) {
-        if (DragonService.appOpen) { notHomeWhy = "Home Dragon app open"; leaveHome(); return }
+        if (DragonService.appOpen) { notHomeWhy = "Home Dragon app open"; stopPoll(); leaveHome(); return }
         val f = front()
         if (f != null && f.pkg != launcher) {
             notHomeWhy = if (f.pkg == null) "window in front cannot be read" else "another app in front"
+            stopPoll()
             leaveHome()
             return
         }
         scheduleBarRead()
+        startPoll()
     }
 
     // ---- scanning: wait for quiet, scan, then look once more until two reads in a row agree ----
