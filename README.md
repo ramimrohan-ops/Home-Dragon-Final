@@ -462,3 +462,23 @@ Changes to the "found something" routine (v4.16 / v4.17). It is now a phase mach
 - Not changed: the real fire breath (no scorching from the small flame), the 0.5 s scan wait, the bar read.
 - Not proven on the phone: the bug size and speed, the 30% chance, the strip size on normal icons, the join between the hop and the chase. Tune after seeing it.
 
+
+## v4.19 - the bug lives on its own: appears anywhere, jumps between icons and widgets, the dragon notices and follows
+The bug is no longer part of a dragon move. It is a small creature that appears, wanders, jumps and is hunted.
+
+| Step | What happens |
+|---|---|
+| Appears | At a random time (every **45 s on average**, 20 - 70 s), only while the dragon is awake and idle (not asleep, flying, firing or hunting), on a random icon **or widget** of this page. A new random colour each time. One bug at a time. |
+| Wanders | Darts about on the top edge of its icon or widget (85 units per second, short pauses) and **jumps to a nearby icon or widget by itself every 2.5 - 5 s, with no limit on the number of jumps**: icon to icon, widget to widget, icon to widget, **including the row above or below**. A 0.35 - 0.55 s arc with a spin. If nothing is near it stays. It is never on the gap and only in the air during the arc. |
+| Noticed | After a random **1 - 3 s of the dragon being awake and idle** (the clock stops while it sleeps, flies, breathes fire or scratches). |
+| Followed | The dragon crouches and **hops** to a near icon or **flies** to a far one, landing beside the bug (on a widget: 72 units from it). If the bug jumped meanwhile, it follows again. |
+| Dragon lands | The bug **jumps again with a 60% chance** (as often as it happens; no cap) and the dragon follows again. Otherwise it stays. |
+| Same icon | If the bug is already on the dragon's icon the dragon turns its head to it (0.3 s), bows and goes straight to the small flame. On a widget with the bug far away it first **runs along** (2.4 times walking speed) until the bug is within 80 units. |
+| Flame | Unchanged from 4.18: small flame (0.6 s), the bug dies at 0.2 s, dead pose with fire-coloured smoke, 0.5 s check, 30% fake death (once per hunt), then the bug flees to the far end of its strip and **jumps away if there is a neighbour** (the dragon follows); pick up and eat. |
+
+- **Ground beside the dragon:** when the dragon stands on the bug's icon the bug keeps to one side of it, in front of the front feet (34 units), never a strip narrower than 14 units. If the dragon lands on it, it runs out of the way. Away from the dragon it can use the icon's whole top edge.
+- **Removed:** the old 1.1 s stare, the "forage" mood in the mood list and the random start while walking. The run is now 4.3 s (6.3 s with a fake death) after the dragon is next to the bug.
+- **Page change:** a swipe to another page removes the bug. Opening an app or the screen turning off keeps it.
+- **Log:** "Bug: appeared on an icon / a widget", "Bug: the dragon noticed it", "Bug: burnt", "Bug: eaten". Jumps are not logged (too many).
+- **Cost:** while a bug is on screen the dragon no longer drops to the idle 30 fps rate.
+- No sound, no vibration. Not proven on the phone: spawn rate, notice time, jump distance (neighbour = gap under 1.7 icon sizes), the 60% chance, the run speed on widgets, the strip size on normal icons. Tune after seeing it.
