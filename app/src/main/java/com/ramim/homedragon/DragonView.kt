@@ -68,6 +68,7 @@ private const val BUG_SPEED = 85f            // model units per second while dar
 private const val BUG_FLEE_SPEED = 140f
 private const val BUG_EDGE_MARGIN = 4f       // px kept from the icon's edge
 private const val BUG_REACH = 80f            // on a widget the dragon runs until the bug is this close (model units)
+private const val BUG_LAND_S = 0.14f         // the small squash when it lands
 private const val BUG_REJUMP = 0.6f          // chance that the bug jumps on again when the dragon lands next to it
 private const val BUG_SPAWN_MIN = 20f        // it appears at a random time, every 45 s on average (dragon awake and idle)
 private const val BUG_SPAWN_MAX = 70f
@@ -88,9 +89,10 @@ private fun lerp3(a: Float, b: Float, t: Float) = a + (b - a) * t
 private fun deg(r: Float) = r * 57.29578f
 
 /**
- * Behaviour and effects. Icons are the only ground: the dragon perches on an icon, then either jumps
+ * Behaviour and effects. Icons and widgets are the only ground: the dragon perches on one, then either jumps
  * to a neighbouring icon, flies a free random path through the screen and lands on an icon, or
- * hovers and breathes blue fire at an icon (which gets scorched and slowly cools down).
+ * hovers and breathes blue fire at an icon (which gets scorched and slowly cools down). Now and then a bug
+ * appears on an icon or widget, wanders and jumps about; the dragon notices it, follows it and burns it with a small flame.
  *
  * Frames come from Choreographer. pause() removes the callback and keeps everything in memory.
  */
@@ -146,10 +148,7 @@ class DragonView(context: Context) : View(context) {
     private var chargeThick = 1f           // Charge-up wave thickness slider
     private var chargeQ = 1f            // Charge-up quality slider: scales the sparks, imploding particles and waves of the charge-up
     private var chargeT = 1.5f            // charge-up before every fire breath (seconds, "Charge-up time" slider, 0 = off): tail tip -> spine spikes -> neck -> orb in the mouth
-    private val chB = FloatArray(16)
     private var fireFt = -1f              // time since the breath itself started (negative while charging)
-    private val cbx = FloatArray(16); private val cby = FloatArray(16); private val ctx = FloatArray(16); private val cty = FloatArray(16); private val cfr = FloatArray(16)
-    private val orbP = FloatArray(2)
     private var sleepPhase = 0          // 0 lying down, 1 asleep, 2 getting up
     private var sleepDur = 4f           // seconds asleep (never more than 6)
     private var sleepAfterWalk = false  // a few steps first, then lie down
@@ -163,8 +162,6 @@ class DragonView(context: Context) : View(context) {
     private var fgWillRevive = false
     private var fgRevived = false
     private var fgHit = false
-    private var fgSnapped = false
-    private var fgChaseDur = D_CHASE
     private var fgAimX = 0f                // where the small flame aims: the bug's position with a tiny lag
     private var fgAimY = 0f
     private var bugOn = false
@@ -198,6 +195,14 @@ class DragonView(context: Context) : View(context) {
     private val bugEdge = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 0.8f; strokeCap = Paint.Cap.ROUND }
     private val bugLeg = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 0.9f; strokeCap = Paint.Cap.ROUND }
     private val bugR = RectF()
+    private val bugMark = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }                       // spots on the back
+    private val bugShadow = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = Color.BLACK }
+    private val bugEye = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = Color.rgb(20, 16, 18) }
+    private val bugGlint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = Color.WHITE }
+    private val bugWing = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = Color.argb(95, 255, 255, 255) }
+    private val bugShine = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = Color.argb(110, 255, 255, 255) }
+    private var bugPat = 0                 // pattern on its back: 0 plain, 1 stripes, 2 spots (new every time it appears)
+    private var bugLandT = 0f              // squash after a landing, seconds left
     private var fgCrumb = 0
     private val hl2 = FloatArray(2)
     private val crX = FloatArray(8); private val crY = FloatArray(8); private val crVx = FloatArray(8); private val crVy = FloatArray(8); private val crAge = FloatArray(8)
@@ -969,7 +974,7 @@ class DragonView(context: Context) : View(context) {
         bugIcon = i
         bugOn = true; bugSt = BUG_ALIVE; bugT = 0f; bugAge = 0f
         bugFlee = false; bugFwd = true; bugMoving = false; bugSmoke = 0f
-        bugH = rnd(0f, 360f); bugS = rnd(0.65f, 0.9f); bugV = rnd(0.6f, 0.95f)
+        bugH = rnd(0f, 360f); bugS = rnd(0.65f, 0.9f); bugV = rnd(0.6f, 0.95f); bugPat = Random.nextInt(3); bugLandT = 0f
         bugSide = if (!air && iconIdx == i) roomSide(i) else 1f
         bugRangeFor(i, bugSide)
         bugWx = rgLo + (rgHi - rgLo) * rnd(0.1f, 0.9f); bugWy = sitY(i)
@@ -1002,6 +1007,7 @@ class DragonView(context: Context) : View(context) {
     /** Runs from the frame loop while the bug is on. */
     private fun updateBug(dt: Float) {
         bugT += dt; bugAge += dt
+        if (bugLandT > 0f) bugLandT -= dt
         when (bugSt) {
             BUG_ALIVE -> aliveBug(dt)
             BUG_FLIP -> if (bugT >= D_REVIVE) { bugSt = BUG_ALIVE; bugT = 0f; bugFlee = true; bugFwd = true; bugPause = 0f }
@@ -1011,7 +1017,7 @@ class DragonView(context: Context) : View(context) {
                 bugAirY = bugJy0 + (bugJy1 - bugJy0) * u - 4f * u * (1f - u) * size * 0.5f
                 if (u >= 1f) {
                     bugIcon = bugJumpIcon; bugWx = bugJx1; bugWy = bugJy1
-                    bugSt = BUG_ALIVE; bugT = 0f; bugFlee = false; bugFwd = true; bugPause = rnd(0.2f, 0.4f); bugGoalX = bugWx
+                    bugSt = BUG_ALIVE; bugT = 0f; bugFlee = false; bugFwd = true; bugPause = rnd(0.2f, 0.4f); bugGoalX = bugWx; bugLandT = BUG_LAND_S
                     if (!air && iconIdx == bugIcon) setBugSide() else bugSide = bugJumpSide
                 }
             }
@@ -1145,7 +1151,7 @@ class DragonView(context: Context) : View(context) {
         bugSide = if (abs(dx) > 4f * ds) (if (dx > 0f) 1f else -1f) else roomSide(iconIdx)
         fgDir = bugSide; faceT = fgDir
         mode = Mode.FORAGE; t = 0f; fgAcc = 0f; fgCrumb = 0; ncr = 0
-        fgHit = false; fgSnapped = false; fgChaseDur = D_CHASE
+        fgHit = false
         huntOn = true; sleepAfterWalk = false; stalkNow = false
         fgSpotX = bx; fgSpotY = sitY(bugDest()); fgAimX = fgSpotX; fgAimY = fgSpotY
         fgPhase = if (ic(iconIdx).big && abs(dx) / ds > BUG_REACH) FP_STALK else FP_NOTICE
@@ -1401,7 +1407,7 @@ class DragonView(context: Context) : View(context) {
                     }
                     FP_REVIVE -> {
                         lowT = lerp3(0.75f, 0.55f, smooth(0f, D_REVIVE, fgT))
-                        if (fgT >= D_REVIVE) { fgRevived = true; fgPhase = FP_CHASE; fgT = 0f; fgChaseDur = D_CHASE; fgSnapped = false }
+                        if (fgT >= D_REVIVE) { fgRevived = true; fgPhase = FP_CHASE; fgT = 0f }
                     }
                     FP_CHASE -> {
                         stalkStep(dt)                                               // on a widget the dragon runs after the bug
@@ -1409,7 +1415,7 @@ class DragonView(context: Context) : View(context) {
                         val u = (fgT - (snapAt - 0.2f)) / 0.35f
                         lowT = 0.55f + 0.45f * (if (u > 0f && u < 1f) sin(PI.toFloat() * u) else 0f)
                         mouthT = 0.8f * smooth(snapAt - 0.1f, snapAt - 0.02f, fgT) * (1f - smooth(snapAt, snapAt + 0.06f, fgT))
-                        if (fgT >= fgChaseDur) { fgPhase = FP_FLAME; fgT = 0f; fgHit = false }
+                        if (fgT >= D_CHASE) { fgPhase = FP_FLAME; fgT = 0f; fgHit = false }
                     }
                     FP_PICK -> {
                         lowT = if (fgT < PICK_BITE) lerp3(0.75f, 1f, smooth(0f, PICK_BITE, fgT)) else 1f - 0.85f * smooth(PICK_BITE + 0.1f, D_PICK, fgT)
@@ -1631,50 +1637,92 @@ class DragonView(context: Context) : View(context) {
             hsv[1] = bugS * 0.35f; hsv[2] = min(1f, 0.6f + 0.4f * bugV); bugEdge.color = Color.HSVToColor(hsv)
             hsv[1] = bugS; hsv[2] = bugV * 0.45f; bugLeg.color = Color.HSVToColor(hsv)
         }
+        bugMark.color = bugLeg.color
     }
 
-    /** The bug: an oval in its random colour with a pale outline, three legs per side that wiggle while it moves, two feelers; dead, it lies on its back. */
+    /** A soft shadow on the ground under the bug; smaller and fainter while it is in the air. */
+    private fun bugShade(c: Canvas, x: Float, y: Float, lift: Float, k: Float) {
+        bugShadow.alpha = (70f * k * (1f - 0.6f * lift)).toInt().coerceIn(0, 255)
+        val hw = 6.5f * sc * (1f - 0.3f * lift) * k
+        bugR.set(x - hw, y - 0.9f * sc * k, x + hw, y + 0.9f * sc * k)
+        c.drawOval(bugR, bugShadow)
+    }
+
+    /**
+     * The bug seen from above, head to the right: abdomen, thorax and head with a pinch between them, a pattern on the back (plain, stripes or spots,
+     * in a darker shade of its colour), a split line for the wing cases, a shine, two eyes, antennae with tips, six legs with knees.
+     * Jumping: no spin, the body stays level, the legs are tucked and thin wings open. A small squash when it lands.
+     */
     private fun drawBug(c: Canvas) {
         if (bugSt == BUG_DEAD || (bugSt == BUG_FLIP && bugT < D_REVIVE * 0.5f)) { drawDeadBug(c, bugSt == BUG_FLIP); return }
         bugColors(false)
         val jumping = bugSt == BUG_JUMP
         val flipping = bugSt == BUG_FLIP
+        val u = if (jumping) min(1f, bugT / bugJumpDur) else 0f
         val px = if (jumping) bugAirX else bugWx
         val py = if (jumping) bugAirY else bugWy
         val face = bugDir
         val pop = max(0.05f, smooth(0f, 0.25f, bugAge))          // pops up when it appears
         val hop = if (flipping) sin(PI.toFloat() * min(1f, bugT / D_REVIVE)) * 4f else if (bugMoving) abs(sin(time * 18f)) * 1.1f else 0f
-        val amp = if (jumping || flipping) 1f else if (bugMoving) 0.8f else 0.15f
+        val amp = if (jumping) 0f else if (flipping) 1f else if (bugMoving) 0.8f else 0.15f
+        val tuck = if (jumping) 1f else 0f
+        val sq = if (bugLandT > 0f) sin(PI.toFloat() * (1f - bugLandT / BUG_LAND_S)) else 0f
+        bugShade(c, px, if (jumping) bugJy0 + (bugJy1 - bugJy0) * u else py, if (jumping) 4f * u * (1f - u) else 0f, pop)
         c.save()
-        c.translate(px, py - (3.6f + hop) * sc)
-        if (jumping) c.rotate(face * 360f * min(1f, bugT / bugJumpDur))
+        c.translate(px, py)
+        if (sq > 0f) c.scale(1f + 0.18f * sq, 1f - 0.28f * sq)               // squashes against the ground
+        c.translate(0f, -(3.6f + hop) * sc)
         val flipY = if (flipping) -1f + 2f * smooth(D_REVIVE * 0.5f, D_REVIVE, bugT) else 1f      // flips back onto its legs
         c.scale(face * sc * pop, flipY * sc * pop)
         for (k in 0 until 3) {
-            val lx = -2.4f + 2.4f * k
+            val lx = -2.6f + 2.5f * k
             val w = amp * sin(time * 60f + k * 2.1f)
-            c.drawLine(lx, 1.2f, lx + w * 1.8f - 0.9f, 3.9f, bugLeg)
-            c.drawLine(lx, -1.2f, lx - w * 1.8f - 0.9f, -3.9f, bugLeg)
+            for (q in 0 until 2) {
+                val sg = if (q == 0) -1f else 1f
+                val kx = lx - 0.9f + w * 0.8f - 0.8f * tuck; val ky = sg * (3.0f - 0.5f * tuck)
+                val fx = lx - 0.3f + w * 1.6f - 1.4f * tuck; val fy = sg * (3.9f - 1.0f * tuck)
+                c.drawLine(lx, sg * 1.5f, kx, ky, bugLeg); c.drawLine(kx, ky, fx, fy, bugLeg)
+            }
         }
-        bugR.set(-4.6f, -2.3f, 2.6f, 2.3f)
-        c.drawOval(bugR, bugFill); c.drawOval(bugR, bugEdge)
-        c.drawCircle(3.6f, 0f, 1.6f, bugFill); c.drawCircle(3.6f, 0f, 1.6f, bugEdge)
+        bugR.set(-6.4f, -2.7f, -0.6f, 2.7f); c.drawOval(bugR, bugFill); c.drawOval(bugR, bugEdge)          // abdomen
+        bugR.set(-1.6f, -2.1f, 2.9f, 2.1f); c.drawOval(bugR, bugFill); c.drawOval(bugR, bugEdge)           // thorax
+        c.drawCircle(4.1f, 0f, 1.7f, bugFill); c.drawCircle(4.1f, 0f, 1.7f, bugEdge)                       // head
+        if (bugPat == 1) {
+            c.drawLine(-5.2f, -1.5f, -5.2f, 1.5f, bugLeg); c.drawLine(-3.5f, -2.2f, -3.5f, 2.2f, bugLeg); c.drawLine(-1.8f, -1.5f, -1.8f, 1.5f, bugLeg)
+        } else if (bugPat == 2) {
+            c.drawCircle(-4.7f, -1.1f, 0.65f, bugMark); c.drawCircle(-4.7f, 1.1f, 0.65f, bugMark); c.drawCircle(-2.8f, 0f, 0.75f, bugMark)
+            c.drawCircle(-3.3f, -1.5f, 0.45f, bugMark); c.drawCircle(-3.3f, 1.5f, 0.45f, bugMark)
+        }
+        c.drawLine(-1.5f, 0f, -5.9f, 0f, bugEdge)                                                          // split between the wing cases
+        bugR.set(-4.9f, -2.1f, -2.3f, -1.1f); c.drawOval(bugR, bugShine)
+        c.drawCircle(4.7f, -0.9f, 0.55f, bugEye); c.drawCircle(4.7f, 0.9f, 0.55f, bugEye)
+        c.drawCircle(4.85f, -1.05f, 0.2f, bugGlint); c.drawCircle(4.85f, 0.75f, 0.2f, bugGlint)
         val fw = sin(time * 22f) * (if (bugMoving || jumping) 0.9f else 0.35f)
-        c.drawLine(4.8f, -0.7f, 7.4f, -2.4f + fw, bugLeg)
-        c.drawLine(4.8f, 0.7f, 7.4f, 2.4f - fw, bugLeg)
+        c.drawLine(5.2f, -0.7f, 7.8f, -2.4f + fw, bugLeg); c.drawLine(5.2f, 0.7f, 7.8f, 2.4f - fw, bugLeg)
+        c.drawCircle(7.8f, -2.4f + fw, 0.4f, bugMark); c.drawCircle(7.8f, 2.4f - fw, 0.4f, bugMark)
+        if (jumping) {
+            val fl = sin(time * 70f) * 10f
+            for (q in 0 until 2) {
+                val sg = if (q == 0) -1f else 1f
+                c.save(); c.translate(-0.2f, sg * 1.6f); c.rotate(-sg * (38f + fl))
+                bugR.set(-6.2f, -0.9f, 0.2f, 0.9f); c.drawOval(bugR, bugWing); c.drawOval(bugR, bugEdge)
+                c.restore()
+            }
+        }
         c.restore()
     }
 
-    /** Dead (or just waking up): on its back, a pale belly, six legs up and curled outward, limp feelers; the legs twitch for a moment. */
+    /** Dead (or just waking up): on its back, a pale belly with segment lines, six bent legs up, x eyes, limp antennae; the legs twitch for a moment. */
     private fun drawDeadBug(c: Canvas, waking: Boolean) {
         bugColors(true)
         val face = bugDir
         val tw = if (waking) 1f else max(0f, 1f - bugT / 0.2f)
+        bugShade(c, bugWx, bugWy, 0f, 1f)
         c.save()
         c.translate(bugWx, bugWy - 2.4f * sc)
         c.scale(face * sc, sc)
         for (k in 0 until 6) {
-            val x0 = -4f + 1.6f * k
+            val x0 = -4.2f + 1.45f * k
             val sgn = if (k < 3) -1f else 1f
             val w = tw * sin(time * 50f + k * 1.7f) * 1.1f
             val x1 = x0 + sgn * 0.9f + w
@@ -1682,14 +1730,20 @@ class DragonView(context: Context) : View(context) {
             c.drawLine(x0, -1.8f, x1, -4.6f, bugLeg)
             c.drawLine(x1, -4.6f, x2, -6.4f, bugLeg)
         }
-        bugR.set(-4.8f, -2.2f, 3.4f, 2.4f)
-        c.drawOval(bugR, bugFill); c.drawOval(bugR, bugEdge)
-        c.drawCircle(4.4f, 0.4f, 1.5f, bugFill); c.drawCircle(4.4f, 0.4f, 1.5f, bugEdge)
-        c.drawLine(5.4f, 0.1f, 7.2f, 1.4f, bugLeg); c.drawLine(5.2f, 0.9f, 7f, 2.2f, bugLeg)
+        bugR.set(-6.4f, -2.5f, -0.6f, 2.7f); c.drawOval(bugR, bugFill); c.drawOval(bugR, bugEdge)
+        bugR.set(-1.6f, -2.0f, 2.9f, 2.2f); c.drawOval(bugR, bugFill); c.drawOval(bugR, bugEdge)
+        c.drawLine(-5.2f, -1.4f, -5.2f, 1.6f, bugEdge); c.drawLine(-3.6f, -2.0f, -3.6f, 2.2f, bugEdge); c.drawLine(-2.0f, -1.4f, -2.0f, 1.6f, bugEdge)     // belly segments
+        c.drawCircle(4.1f, 0.4f, 1.6f, bugFill); c.drawCircle(4.1f, 0.4f, 1.6f, bugEdge)
+        for (q in 0 until 2) {
+            val ey = if (q == 0) -0.5f else 1.3f
+            c.drawLine(4.4f, ey - 0.35f, 5.1f, ey + 0.35f, bugEye); c.drawLine(4.4f, ey + 0.35f, 5.1f, ey - 0.35f, bugEye)             // x eyes
+        }
+        c.drawLine(5.3f, 0.1f, 7.2f, 1.4f, bugLeg); c.drawLine(5.1f, 0.9f, 6.9f, 2.3f, bugLeg)
+        c.drawCircle(7.2f, 1.4f, 0.35f, bugMark); c.drawCircle(6.9f, 2.3f, 0.35f, bugMark)
         c.restore()
     }
 
-    /** The pretend find: the bug on the ground until the bite, then crumbs falling from the chewing mouth. */
+    /** The bug (whenever it exists: on its icon or widget, in the air while it jumps, dead until the bite), then crumbs falling from the chewing mouth. */
     private fun drawForage(c: Canvas) {
         if (bugOn) drawBug(c)
         for (k in 0 until ncr) {

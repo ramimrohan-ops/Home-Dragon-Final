@@ -482,3 +482,16 @@ The bug is no longer part of a dragon move. It is a small creature that appears,
 - **Log:** "Bug: appeared on an icon / a widget", "Bug: the dragon noticed it", "Bug: burnt", "Bug: eaten". Jumps are not logged (too many).
 - **Cost:** while a bug is on screen the dragon no longer drops to the idle 30 fps rate.
 - No sound, no vibration. Not proven on the phone: spawn rate, notice time, jump distance (neighbour = gap under 1.7 icon sizes), the 60% chance, the run speed on widgets, the strip size on normal icons. Tune after seeing it.
+
+## v4.20 - the bug does not spin; body detail; dead-code cleanup
+| Change | Detail |
+|---|---|
+| **No spin** | The bug no longer turns 360 degrees in the air. It keeps its body level and faces the way it jumps. Same arc, 0.35 - 0.55 s. Applies to every jump, including the escape jump after a fake death. |
+| **In the air** | Legs tucked back, thin see-through wings open and flutter; a small shadow on the ground below gets fainter and smaller with height. |
+| **Landing** | A 0.14 s squash against the ground. |
+| **Body** | Seen from above: abdomen, thorax and head with a pinch between them; a split line for the wing cases; a shine; two eyes with a glint; antennae with tips; six legs with knees. |
+| **Pattern** | Random every time a bug appears: plain, stripes or spots, in a darker shade of its colour (on top of its random colour). |
+| **Dead** | On its back with belly segment lines, bent legs up, x eyes, limp antennae with tips, a shadow. |
+| **Cleanup** | Removed `fgSnapped` (written, never read), `fgChaseDur` (always the same value) and seven leftover charge-up arrays (`chB`, `cbx`, `cby`, `ctx`, `cty`, `cfr`, `orbP`) that nothing used. Updated the class comment and the bug comments. A check of the whole project found no unused imports, functions or constants. |
+
+Not changed: size, speed, behaviour. Not proven on the phone: the proportions of the new body at about 20 px.
