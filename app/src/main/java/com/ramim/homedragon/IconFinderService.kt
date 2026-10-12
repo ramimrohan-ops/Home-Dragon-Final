@@ -382,7 +382,7 @@ class IconFinderService : AccessibilityService() {
 
     // ---- short poll: the launcher is on top but its page bar is not visible (yet): read the bar every second, 5 times, then stop ----
     private var pollLeft = 0
-    private val pollRead = Runnable {
+    private val pollRead: Runnable = Runnable {
         val launcher = IconRegistry.launcherPkg
         val wanted = IconRegistry.serviceActive && !IconRegistry.onHome && !IconRegistry.idle && !DragonService.appOpen && launcher != null &&
             front()?.pkg == launcher
