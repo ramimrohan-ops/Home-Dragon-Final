@@ -368,6 +368,12 @@ class IconFinderService : AccessibilityService() {
 
     private val barRead = Runnable { recheckHome() }
 
+    /** One page-bar read in [BAR_READ_MS]; every new trigger restarts the wait. */
+    private fun scheduleBarRead() {
+        handler.removeCallbacks(barRead)
+        handler.postDelayed(barRead, BAR_READ_MS)
+    }
+
     private var light = false               // light mode: only window changes are delivered (see updateMode)
 
     /**
