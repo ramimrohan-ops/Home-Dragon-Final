@@ -22,6 +22,9 @@ import kotlin.math.min
 
 /** How long the screen must stay still (no swipe, scroll or window change) before icon positions are read. Every scan waits this long. */
 private const val SETTLE_MS = 500L
+private const val MODE_FULL = 0        // home screen on top
+private const val MODE_WATCH = 1       // launcher on top, no visible page bar: reads the bar only
+private const val MODE_LIGHT = 2       // anything else: window changes only
 
 /** The page bar is read once, this long after the last window change, swipe or scroll, screen on / unlock, or Home Dragon app open / close. */
 private const val BAR_READ_MS = 400L
@@ -67,8 +70,10 @@ class IconFinderService : AccessibilityService() {
         IconRegistry.page = 0; IconRegistry.pages = 0; IconRegistry.noItems = false
         IconRegistry.recheckNow = { handler.post { scheduleBarRead() } }
         Diag.log(this, "Icon finder connected")
-        light = false                                    // Android starts a connected service in full mode
-        IconRegistry.light = false
+        mode = MODE_FULL                                 // Android starts a connected service in full mode
+        launcherTop = false
+        barPending = false
+        IconRegistry.light = false; IconRegistry.watch = false
         IconRegistry.modeChanged = { handler.post { updateMode(); if (!IconRegistry.idle) scheduleBarRead() } }
         KeepAlive.ensureDragon(this, "icon finder connected")
         IconRegistry.listener?.invoke()
@@ -240,8 +245,8 @@ class IconFinderService : AccessibilityService() {
         }
         Diag.log(this, "Icon finder disconnected")
         IconRegistry.modeChanged = null
-        IconRegistry.light = false
-        handler.removeCallbacks(barRead)
+        IconRegistry.light = false; IconRegistry.watch = false
+        handler.removeCallbacks(barRead); barPending = false; launcherTop = false
         IconRegistry.recheckNow = null
         IconRegistry.serviceActive = false
         IconRegistry.icons = emptyList()
@@ -286,10 +291,11 @@ class IconFinderService : AccessibilityService() {
      */
     private fun homeFromWindows(): Check? {
         val launcher = IconRegistry.launcherPkg ?: return null
-        if (DragonService.appOpen) { notHomeWhy = "Home Dragon app open"; return Check(false, 0, 0) }
+        if (DragonService.appOpen) { launcherTop = false; notHomeWhy = "Home Dragon app open"; return Check(false, 0, 0) }
         val f = front() ?: return null
-        if (f.pkg == null) { notHomeWhy = "window in front cannot be read"; return Check(false, 0, 0) }
-        if (f.pkg != launcher) { notHomeWhy = "another app in front"; return Check(false, 0, 0) }
+        if (f.pkg == null) { launcherTop = false; notHomeWhy = "window in front cannot be read"; return Check(false, 0, 0) }
+        if (f.pkg != launcher) { launcherTop = false; notHomeWhy = "another app in front"; return Check(false, 0, 0) }
+        launcherTop = true                               // the launcher is on top: home, or Recents / a folder / the app vault (watch mode)
         val s = readScreen(f.root)
         if (s.recents) { notHomeWhy = "Recents on screen (Clear all button)"; return Check(false, 0, 0) }
         val bar = s.bar
@@ -357,6 +363,7 @@ class IconFinderService : AccessibilityService() {
             val active = try { rootInActiveWindow?.packageName?.toString() } catch (e: Exception) { null }
             if (active != launcher) {
                 notHomeWhy = "another app in front (usage access)"
+                launcherTop = false
                 leaveHome()
                 updateMode()
                 return
@@ -366,37 +373,53 @@ class IconFinderService : AccessibilityService() {
         updateMode()
     }
 
-    private val barRead = Runnable { recheckHome() }
+    private var barPending = false          // a bar read is waiting in the handler
+    private val barRead = Runnable { barPending = false; recheckHome() }
 
     /** One page-bar read in [BAR_READ_MS]; every new trigger restarts the wait. */
     private fun scheduleBarRead() {
         handler.removeCallbacks(barRead)
+        barPending = true
         handler.postDelayed(barRead, BAR_READ_MS)
     }
 
-    private var light = false               // light mode: only window changes are delivered (see updateMode)
+    /** Watch mode: the launcher redraws all the time, so a read that is already waiting is left alone (the wait is not restarted). */
+    private fun scheduleBarReadOnce() {
+        if (barPending) return
+        scheduleBarRead()
+    }
+
+    private var mode = MODE_FULL            // which events are delivered (see updateMode)
+    private var launcherTop = false         // the launcher is the top application window (home, Recents, a folder, the app vault)
 
     /**
-     * Full mode only while the home screen is on top. Everywhere else (another app, the Home Dragon app, Recents, an app vault, screen
-     * off or locked) it is light mode: Android then only reports window changes, not every scroll. The node flags are the same in both
-     * modes, so the page bar can be read in light mode too. (Switching the service off completely is not possible from inside it.)
+     * Three modes. Full: the home screen is on top (window changes and scrolls). Watch: the launcher is on top but its page bar is not
+     * visible (a folder open, Recents, the app vault): window changes, scrolls and the launcher's content changes, so closing a folder is
+     * noticed; the only work is one bar read. Light: another app, the Home Dragon app, screen off or locked: window changes only.
+     * The node flags are the same in every mode, so the page bar can always be read. (Switching the service off completely is not
+     * possible from inside it.)
      */
     private fun updateMode() {
-        val want = IconRegistry.idle || !IconRegistry.onHome
-        if (want == light) return
+        val want = if (IconRegistry.idle) MODE_LIGHT
+        else if (IconRegistry.onHome) MODE_FULL
+        else if (launcherTop) MODE_WATCH
+        else MODE_LIGHT
+        if (want == mode) return
         try {
             val info = getServiceInfo() ?: return
-            info.eventTypes = if (want) {
-                AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or AccessibilityEvent.TYPE_WINDOWS_CHANGED
-            } else {
-                // No content-changed events: a widget redrawing every second must not wake the icon finder.
-                AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or AccessibilityEvent.TYPE_VIEW_SCROLLED or AccessibilityEvent.TYPE_WINDOWS_CHANGED
+            val window = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or AccessibilityEvent.TYPE_WINDOWS_CHANGED
+            info.eventTypes = when (want) {
+                MODE_LIGHT -> window
+                MODE_WATCH -> window or AccessibilityEvent.TYPE_VIEW_SCROLLED or AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+                // Full: no content-changed events, a widget redrawing every second must not wake the icon finder.
+                else -> window or AccessibilityEvent.TYPE_VIEW_SCROLLED
             }
             info.flags = AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS or
                 AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
             setServiceInfo(info)
-            light = want
-            IconRegistry.light = want
+            mode = want
+            IconRegistry.light = want == MODE_LIGHT
+            IconRegistry.watch = want == MODE_WATCH
         } catch (_: Throwable) {
         }
     }
@@ -446,6 +469,11 @@ class IconFinderService : AccessibilityService() {
         if (type == AccessibilityEvent.TYPE_WINDOWS_CHANGED) { onWindowChange(launcher); return }
         val pkg = event.packageName?.toString() ?: return
 
+        if (type == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
+            // Only delivered in watch mode. The launcher redrew (a folder closed, Recents moved): read the bar once, unless a read is waiting.
+            if (pkg == launcher && !IconRegistry.onHome && launcherTop && !IconRegistry.idle) scheduleBarReadOnce()
+            return
+        }
         if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             // Ignore system overlays that do not change what the user is looking at.
             if (pkg == "com.android.systemui" || pkg == packageName) return
@@ -470,11 +498,13 @@ class IconFinderService : AccessibilityService() {
      * The launcher in front needs its page bar read once, 0.4 s after the last change.
      */
     private fun onWindowChange(launcher: String) {
-        if (DragonService.appOpen) { notHomeWhy = "Home Dragon app open"; leaveHome(); return }
+        if (DragonService.appOpen) { notHomeWhy = "Home Dragon app open"; launcherTop = false; leaveHome(); updateMode(); return }
         val f = front()
         if (f != null && f.pkg != launcher) {
             notHomeWhy = if (f.pkg == null) "window in front cannot be read" else "another app in front"
+            launcherTop = false
             leaveHome()
+            updateMode()
             return
         }
         scheduleBarRead()

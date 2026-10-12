@@ -41,6 +41,7 @@ object IconRegistry {
     @Synchronized
     fun scanLines(): List<String> = scanLog.reversed()
     @Volatile var idle: Boolean = false                // screen off or locked: set by the dragon service, the icon finder then runs in light mode
+    @Volatile var watch: Boolean = false               // the icon finder is in watch mode (launcher on top, no visible page bar), shown in the health card
     @Volatile var light: Boolean = false               // the icon finder is in light mode (window changes only), shown in the health card
     var modeChanged: (() -> Unit)? = null               // asks the icon finder to pick light or full mode again (may be called from any thread)
     var recheckNow: (() -> Unit)? = null                // asks the icon finder to read the page bar once, 0.4 s from now (the Home Dragon app opened or closed)

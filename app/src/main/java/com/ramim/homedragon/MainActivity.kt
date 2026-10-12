@@ -1003,7 +1003,7 @@ class MainActivity : Activity() {
         val sb = StringBuilder()
         sb.append("Dragon service : ").append(if (running) "running" else "NOT running").append('\n')
         sb.append("Icon finder    : ").append(if (finder) "connected" else if (a11yEnabled()) "switched on, not connected" else "off").append('\n')
-        sb.append("Icon finder mode: ").append(if (!finder) "-" else if (IconRegistry.light) "light" else "full").append('\n')
+        sb.append("Icon finder mode: ").append(if (!finder) "-" else if (IconRegistry.light) "light" else if (IconRegistry.watch) "watch (reading the page bar only)" else "full").append('\n')
         sb.append("Page bar        : ").append(if (IconRegistry.page > 0) "page ${IconRegistry.page} of ${IconRegistry.pages}" else "-").append('\n')
         sb.append("Saved pages    : ").append(IconRegistry.scanSaved).append('\n')
         sb.append("Usage access   : ").append(if (Foreground.granted(this)) "on" else "off").append('\n')
