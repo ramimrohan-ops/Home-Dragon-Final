@@ -66,7 +66,11 @@ private const val BUG_FRONT = 34f
 private const val BUG_MIN_ROOM = 14f
 private const val BUG_SPEED = 85f            // model units per second while darting
 private const val BUG_FLEE_SPEED = 140f
-private const val BUG_EDGE_MARGIN = 4f       // px kept from the icon's edge
+private const val BUG_EDGE_MARGIN = 4f       // px kept from the end of the ground, at the very least
+/** Footing (v4.21), measured on the phone: icon corner radius about 4% of the screen width (49 px of 1220), icon picture about 16% of it. */
+private const val CORNER_FRAC = 0.04f
+private const val PIC_FRAC = 0.16f
+private const val FOOT_REACH = 44f           // the hind feet are the farthest from the origin (front feet 30 ahead, hind 44 behind), model units
 private const val BUG_REACH = 80f            // on a widget the dragon runs until the bug is this close (model units)
 private const val BUG_LAND_S = 0.14f         // the small squash when it lands
 private const val BUG_REJUMP = 0.6f          // chance that the bug jumps on again when the dragon lands next to it
@@ -187,6 +191,8 @@ class DragonView(context: Context) : View(context) {
     private var bugJumpT = 3f              // seconds until the bug jumps to another icon or widget by itself
     private var huntOn = false             // the dragon is after the bug (flying to it, or next to it)
     private var stalkNow = false           // the dragon is running along a widget after the bug
+    private var wbLo = 0f; private var wbHi = 0f                 // where the dragon may stand on a big surface, world x (see walkBounds)
+    private var lastGroundLog = ""
     private var rgLo = 0f; private var rgHi = 0f                 // the bug's ground, world x (see bugRangeFor)
     private var bugSmoke = 0f
     private var bugH = 0f; private var bugS = 0.8f; private var bugV = 0.8f      // the bug's colour (hue, saturation, value): new every time it appears
@@ -712,6 +718,12 @@ class DragonView(context: Context) : View(context) {
         icons = newIcons
         applyScale()
         val pageChanged = placed && icons.size >= 2 && matched < newIcons.size * 0.4f
+        run {
+            val ni0 = icons.firstOrNull { !it.big }; val wi0 = icons.firstOrNull { it.big }
+            val gl = "Ground: icon " + (ni0?.let { "${it.r.width().toInt()}x${it.r.height().toInt()}" } ?: "-") + " px, widget " +
+                (wi0?.let { "${it.r.width().toInt()}x${it.r.height().toInt()}" } ?: "-") + " px, screen $width px, 1 unit = " + "%.2f".format(ds) + " px, corner " + (ni0?.let { cornerR(it).toInt() } ?: 0) + " px"
+            if (gl != lastGroundLog) { lastGroundLog = gl; Diag.log(context, gl) }
+        }
         if (bugOn) {
             if (!placed || settling || pageChanged) endBug()                // another page: the bug stays behind
             else { bugIcon = nearestIcon(bugWx, bugWy); bugJumpIcon = nearestIcon(bugJx1, bugJy1) }
@@ -727,7 +739,8 @@ class DragonView(context: Context) : View(context) {
         } else if (mode == Mode.IDLE || mode == Mode.CROUCH || mode == Mode.SLEEP || mode == Mode.SCRATCH || mode == Mode.FORAGE) {
             val ni = nearestIcon(st.x, st.y)
             val nc = ic(ni)
-            land(ni, true, if (nc.big) clampF(st.x, nc.r.left + 16f, max(nc.r.left + 17f, nc.r.right - 16f)) else null)
+            if (nc.big) walkBounds(nc)
+            land(ni, true, if (nc.big) clampF(st.x, wbLo, max(wbLo + 1f, wbHi)) else null)
         }
     }
 
@@ -744,11 +757,33 @@ class DragonView(context: Context) : View(context) {
 
     private fun ic(i: Int) = icons[i.coerceIn(0, icons.size - 1)]
     private fun sitX(i: Int) = ic(i).cx
+    // ---------- footing (v4.21): feet and bug on the flat part, not over the rounded corners ----------
+
+    /** Left and right end of the ground of [c]: a big surface is its whole width; a normal icon is its picture (never wider than the picture is on this screen). */
+    private fun groundL(c: Icon) = if (c.big) c.r.left else c.cx - min(c.r.width(), width * PIC_FRAC) / 2f
+    private fun groundR(c: Icon) = if (c.big) c.r.right else c.cx + min(c.r.width(), width * PIC_FRAC) / 2f
+
+    /** Corner radius of [c]: the measured icon radius; a low wide widget is a pill (radius half its height). */
+    private fun cornerR(c: Icon): Float {
+        val r0 = max(size * 0.25f, width * CORNER_FRAC)
+        return if (c.big && c.r.height() <= r0 * 4.2f) c.r.height() * 0.5f else r0
+    }
+
+    /** How far in from each end a foot or the bug must stand: about half a corner radius (there the surface is only a few px lower). */
+    private fun edgeIn(c: Icon) = cornerR(c) * 0.55f
+
+    /** Where the dragon's origin may stand on big surface [c], world x (wbLo..wbHi): both feet on it, [edgeIn] from each end, whichever way it faces, and the dragon on screen. */
+    private fun walkBounds(c: Icon) {
+        val e = edgeIn(c); val reach = FOOT_REACH * ds
+        wbLo = max(groundL(c) + e + reach, 90f * ds)
+        wbHi = min(groundR(c) - e - reach, width - 90f * ds)
+    }
+
     /** Where on an icon the dragon lands: the middle of a normal icon, anywhere along a big one. */
     private fun landX(i: Int): Float {
         val c = ic(i)
         if (!c.big) return c.cx
-        val lo = max(c.r.left + 16f, 100f * ds * 0.9f); val hi = min(c.r.right - 16f, width - 100f * ds * 0.9f)
+        walkBounds(c); val lo = wbLo; val hi = wbHi
         return if (hi > lo) rnd(lo, hi) else c.cx
     }
     private fun sitY(i: Int) = ic(i).r.top + size * 0.06f
@@ -880,7 +915,7 @@ class DragonView(context: Context) : View(context) {
 
     private fun startWalk(): Boolean {
         val c = ic(iconIdx)
-        val lo = max(c.r.left + 16f, 100f * ds * 0.9f); val hi = min(c.r.right - 16f, width - 100f * ds * 0.9f)
+        walkBounds(c); val lo = wbLo; val hi = wbHi
         if (!(hi - lo > 80f * ds)) return false
         var tx = st.x; var tries = 0
         while (abs(tx - st.x) < 60f * ds && tries++ < 8) tx = rnd(lo, hi)
@@ -895,7 +930,7 @@ class DragonView(context: Context) : View(context) {
     private fun sleepSpot(): Boolean {
         val c = ic(iconIdx)
         if (!c.big || air) return false
-        val head = 70f * ds + 4f; val tailEdge = 110f * ds; val tailScreen = 146f * ds + 4f
+        val head = 70f * ds + 4f + edgeIn(c); val tailEdge = 110f * ds; val tailScreen = 146f * ds + 4f
         val faces = floatArrayOf(faceT, -faceT)
         for (f in faces) {
             val lo: Float; val hi: Float
@@ -923,7 +958,7 @@ class DragonView(context: Context) : View(context) {
         var tx = spot[1]
         // sometimes a few extra steps before lying down (only when there is room)
         if (abs(tx - st.x) < 20f * ds && Random.nextFloat() < 0.5f) {
-            val lo = max(c.r.left + 16f, 100f * ds * 0.9f); val hi = min(c.r.right - 16f, width - 100f * ds * 0.9f)
+            walkBounds(c); val lo = wbLo; val hi = wbHi
             val cand = clampF(st.x + rnd(-110f, 110f) * ds, lo, hi)
             val keepFace = faceT; val keepX = st.x
             st.x = cand; val ok = sleepSpot() && abs(spot[1] - cand) < 2f; st.x = keepX; faceT = keepFace
@@ -958,8 +993,9 @@ class DragonView(context: Context) : View(context) {
      * keeps to [side] of it, in front of its front feet (never a narrower strip than BUG_MIN_ROOM).
      */
     private fun bugRangeFor(i: Int, side: Float) {
-        val r = ic(i).r
-        var lo = r.left + BUG_EDGE_MARGIN; var hi = r.right - BUG_EDGE_MARGIN
+        val c = ic(i)
+        val m = max(BUG_EDGE_MARGIN, edgeIn(c) + 3f)
+        var lo = groundL(c) + m; var hi = groundR(c) - m
         if (!air && iconIdx == i) {
             if (side > 0f) { lo = max(lo, st.x + BUG_FRONT * ds); lo = min(lo, hi - BUG_MIN_ROOM * ds); lo = max(lo, st.x + 24f * ds) }
             else { hi = min(hi, st.x - BUG_FRONT * ds); hi = max(hi, lo + BUG_MIN_ROOM * ds); hi = min(hi, st.x - 24f * ds) }
@@ -1112,7 +1148,7 @@ class DragonView(context: Context) : View(context) {
     /** Where on a widget the dragon lands: [BUG_REACH] model units beside the bug, on the side that fits and is nearer to where it comes from. */
     private fun huntLandX(i: Int, bx: Float): Float {
         val c = ic(i)
-        val lo = max(c.r.left + 16f, 100f * ds * 0.9f); val hi = min(c.r.right - 16f, width - 100f * ds * 0.9f)
+        walkBounds(c); val lo = wbLo; val hi = wbHi
         if (hi <= lo) return c.cx
         val a = bx - 72f * ds; val b = bx + 72f * ds
         val okA = a in lo..hi; val okB = b in lo..hi
@@ -1163,7 +1199,7 @@ class DragonView(context: Context) : View(context) {
         val c = ic(iconIdx)
         if (!c.big) return false
         if ((fgSpotX - st.x) * fgDir / ds <= BUG_REACH) return false
-        val lo = max(c.r.left + 16f, 100f * ds * 0.9f); val hi = min(c.r.right - 16f, width - 100f * ds * 0.9f)
+        walkBounds(c); val lo = wbLo; val hi = wbHi
         val nx = clampF(st.x + fgDir * 26f * sc * 2.4f * st.walk * st.walk * dt, lo, max(lo, hi))
         val moved = abs(nx - st.x)
         if (moved < 0.01f && st.walk > 0.9f) return false                           // the end of the widget

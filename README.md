@@ -495,3 +495,16 @@ The bug is no longer part of a dragon move. It is a small creature that appears,
 | **Cleanup** | Removed `fgSnapped` (written, never read), `fgChaseDur` (always the same value) and seven leftover charge-up arrays (`chB`, `cbx`, `cby`, `ctx`, `cty`, `cfr`, `orbP`) that nothing used. Updated the class comment and the bug comments. A check of the whole project found no unused imports, functions or constants. |
 
 Not changed: size, speed, behaviour. Not proven on the phone: the proportions of the new body at about 20 px.
+
+## v4.21 - feet and bug on the flat part of the surface
+Measured from five screenshots (phone 1220 x 2712): icon picture about 195 px (16% of the screen width), icon and widget corner radius about 49 px (4% of the screen width), the "Ask" pill about 98 px (half its height). At 15 px in from an edge a rounded surface is only about 8 px lower; at 30 px it is level.
+
+| Problem seen | Cause | Fix |
+|---|---|---|
+| Dragon sitting on the Calendar widget with its hind feet over the gap | The centre was kept 16 px from the edge, but the feet span 74 units (front 30, hind 44) | On widgets and big folders the dragon's origin keeps **hind-foot reach + half a corner radius** from each end (`walkBounds`), whichever way it faces. Used for landing, walking, sleeping steps, the follow-landing, running after the bug and the silent re-land after a rescan. |
+| Sleeping dragon's head over the widget's corner | Only the tail was allowed to overhang | The head side also keeps half a corner radius in. |
+| Bug on the corner curve or beside an icon picture | 4 px margin from the reported rectangle | The bug stays **half a corner radius + 3 px** (about 30 px) from each end of its ground. A normal icon's ground is its picture (never wider than 16% of the screen), a widget's is its whole width. |
+| Pill widgets | A far bigger radius | A low wide widget (height under 4.2 corner radii) is treated as a pill: radius = half its height. |
+
+- **Log:** a "Ground: icon WxH px, widget WxH px, screen W px, 1 unit = N px, corner N px" line whenever the layout changes. It shows whether the icon rectangle the finder reports is the picture or a wider cell.
+- Not changed: the dragon on a normal icon (it stands in the middle). Not proven on the phone: the inset (about 27 px), the pill rule, the 16% picture guess.
