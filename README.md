@@ -431,3 +431,12 @@ A new random ground behaviour, picked like scratch or sleep (weight 0.14), and a
 - The small flame uses the normal flame particles with half the size and a lower minimum speed (they are only about 40 px from the mouth to the spot). The real fire breath is unchanged.
 - Never from flying, sleeping, scratching or breathing fire. Not proven on the phone: the bow depth (40 / 80 units), the spot distance, the chew count and the crumb size are estimates to tune after seeing it.
 
+## v4.17 - the find is a moving bug; bigger, longer flame
+- **The spot is now a small bug** (dark oval, pale outline, 3 legs per side that wiggle, 2 feelers). It darts along the ground in short runs (85 model units per second) between 64 and 104 units in front of the dragon, with pauses of 0.12 - 0.35 s, and faces where it is going.
+- **The head stays in step with the bug:** the head angle is worked out from the bug's position every frame and follows at 22 per second (a lag under 0.05 s; it was 12 per second). The neck also leans a little: it bows more when the bug is farther away.
+- **The small flame aims at the bug** (its position with a tiny 0.05 s lag), so it follows the darting.
+- From 0.2 s before the flame ends the bug settles at 90 - 104 units (in reach of the bowed neck) and stays; the pick-up bites it and it disappears.
+- **Small flame:** 75% of the real size (was 50%), 90 particles per second (was 70), burning 0.6 s (was 0.4 s). Still no charge-up, no arcs, no scorching.
+- **New timeline (4.6 s):** notice 0 - 1.0 s, flame 1.1 - 1.7 s, pick up 1.8 - 2.6 s (bite at 2.2 s), eat 2.6 - 4.6 s (lick from 4.2 s).
+- Not proven on the phone: bug speed, range and size, the lean, and how the flame follows. Tune after seeing it.
+
