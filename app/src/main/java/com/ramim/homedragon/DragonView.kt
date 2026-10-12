@@ -34,7 +34,7 @@ private const val TAU = (2.0 * PI).toFloat()
 /** Safety only: if the scan that the dragon waits for after a swipe or a return home never arrives, it fades back in after this long anyway. */
 private const val SCAN_WAIT_MAX_MS = 2500L
 
-/** The dragon appears this long after the FIRST scan of a run has finished (later "stable" check scans do not restart it). */
+/** The dragon appears this long after the scan has finished. */
 private const val APPEAR_AFTER_SCAN_MS = 400L
 
 /** Fade-in time of every appearance (eased in onDraw). */

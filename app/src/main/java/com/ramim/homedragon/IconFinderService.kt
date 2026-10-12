@@ -26,18 +26,8 @@ private const val SETTLE_MS = 500L
 /** The page bar is read once, this long after the last window change, swipe or scroll, screen on / unlock, or Home Dragon app open / close. */
 private const val BAR_READ_MS = 400L
 
-/** After a window change that lands on the launcher without a visible page bar, the bar is read again every [POLL_MS], [POLL_READS] times, then never again. */
-private const val POLL_MS = 1000L
-private const val POLL_READS = 5
-
 /** A Run / Don't run change is held this long before it is sent; if the state is back to the last sent one by then, nothing is sent. */
 private const val SEND_HOLD_MS = 400L
-
-/** After a scan the screen is read once more this much later; while the boxes keep moving (an animation is still running) it is read again. */
-private const val VERIFY_MS = 400L
-
-/** At most this many extra reads after the first one (so up to 4 scans in a row). */
-private const val VERIFY_MAX = 3
 
 /**
  * Finds home screen icon positions and the home screen page. It only reads node bounds (and whether a node is
@@ -45,8 +35,7 @@ private const val VERIFY_MAX = 3
  *
  * The home screen counts as "on top" only when the launcher is the top application window AND its page bar with the two page
  * numbers is VISIBLE to the user. No visible bar: nothing is scanned, the dragon is hidden and Phone Status hears "don't run".
- * The page bar is read 0.4 s after a window change, swipe, screen on or Home Dragon app open / close. While the launcher is on top without a
- * visible bar it is read once a second for 5 seconds after the last window change, then never again.
+ * The page bar is read once, 0.4 s after a window change, swipe, screen on or Home Dragon app open / close. No polling, no repeat reads.
  */
 class IconFinderService : AccessibilityService() {
 
@@ -253,7 +242,6 @@ class IconFinderService : AccessibilityService() {
         IconRegistry.modeChanged = null
         IconRegistry.light = false
         handler.removeCallbacks(barRead)
-        stopPoll()
         IconRegistry.recheckNow = null
         IconRegistry.serviceActive = false
         IconRegistry.icons = emptyList()
@@ -380,36 +368,6 @@ class IconFinderService : AccessibilityService() {
 
     private val barRead = Runnable { recheckHome() }
 
-    // ---- short poll: the launcher is on top but its page bar is not visible (yet): read the bar every second, 5 times, then stop ----
-    private var pollLeft = 0
-    private val pollRead: Runnable = Runnable {
-        val launcher = IconRegistry.launcherPkg
-        val wanted = IconRegistry.serviceActive && !IconRegistry.onHome && !IconRegistry.idle && !DragonService.appOpen && launcher != null &&
-            front()?.pkg == launcher
-        if (!wanted) { pollLeft = 0; return@Runnable }       // home found, another app on top, screen off: stop
-        recheckHome()
-        pollLeft--
-        if (pollLeft > 0 && !IconRegistry.onHome) handler.postDelayed(pollRead, POLL_MS)
-    }
-
-    /** A window change that may land on the launcher: poll for 5 s (restarts on every new window change). */
-    private fun startPoll() {
-        handler.removeCallbacks(pollRead)
-        pollLeft = POLL_READS
-        handler.postDelayed(pollRead, POLL_MS)
-    }
-
-    private fun stopPoll() {
-        handler.removeCallbacks(pollRead)
-        pollLeft = 0
-    }
-
-    /** One page-bar read in [BAR_READ_MS]; every new trigger restarts the wait. */
-    private fun scheduleBarRead() {
-        handler.removeCallbacks(barRead)
-        handler.postDelayed(barRead, BAR_READ_MS)
-    }
-
     private var light = false               // light mode: only window changes are delivered (see updateMode)
 
     /**
@@ -503,54 +461,32 @@ class IconFinderService : AccessibilityService() {
 
     /**
      * A window changed. Another app (or the Home Dragon app) in front is known from the window list at once: not home, no waiting.
-     * The launcher in front needs its page bar read: 0.4 s after the last change, then every second for 5 s while no visible bar is found.
+     * The launcher in front needs its page bar read once, 0.4 s after the last change.
      */
     private fun onWindowChange(launcher: String) {
-        if (DragonService.appOpen) { notHomeWhy = "Home Dragon app open"; stopPoll(); leaveHome(); return }
+        if (DragonService.appOpen) { notHomeWhy = "Home Dragon app open"; leaveHome(); return }
         val f = front()
         if (f != null && f.pkg != launcher) {
             notHomeWhy = if (f.pkg == null) "window in front cannot be read" else "another app in front"
-            stopPoll()
             leaveHome()
             return
         }
         scheduleBarRead()
-        startPoll()
     }
 
-    // ---- scanning: wait for quiet, scan, then look once more until two reads in a row agree ----
-    private var verifyPrev: List<RectF>? = null     // the boxes of the previous scan in this run
-    private var scansDone = 0                       // scans in this run
+    // ---- scanning: wait for quiet, then scan once ----
 
     /** Any trigger: the next scan waits [SETTLE_MS] of quiet (every new trigger restarts the wait). */
     private fun scanSoon() {
         if (!IconRegistry.onHome) return                     // not home: the icon finder does not scan
-        verifyPrev = null; scansDone = 0
         handler.removeCallbacks(settleScan)
         handler.postDelayed(settleScan, SETTLE_MS)
     }
 
-    /**
-     * Scan, then compare with the previous scan of this run. A folder or page animation that was still running when the first scan
-     * happened shows up as moved boxes: the screen is then read again, up to [VERIFY_MAX] more times, until two reads agree.
-     */
+    /** One scan per trigger. No repeat scan afterwards: a new swipe, scroll or window change starts the next one. */
     private fun onSettle() {
         if (!IconRegistry.onHome) return
-        val raw = scan() ?: return
-        scansDone++
-        val prev = verifyPrev
-        if (prev != null && sameBoxes(prev, raw)) {
-            IconRegistry.noteScan("page ${IconRegistry.page} of ${IconRegistry.pages}: stable after $scansDone scans")
-            verifyPrev = null
-            return
-        }
-        verifyPrev = raw
-        if (scansDone <= VERIFY_MAX) {
-            if (scansDone > 1) IconRegistry.noteScan("page ${IconRegistry.page} of ${IconRegistry.pages}: boxes still moving, scanning again ($scansDone of ${VERIFY_MAX + 1})")
-            handler.postDelayed(settleScan, VERIFY_MS)
-        } else {
-            IconRegistry.noteScan("page ${IconRegistry.page} of ${IconRegistry.pages}: still changing after $scansDone scans, stopped")
-        }
+        scan()
     }
 
     /** Two walks see the same page when the same boxes are in the same places (a few pixels of slack). */
