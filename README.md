@@ -440,3 +440,25 @@ A new random ground behaviour, picked like scratch or sleep (weight 0.14), and a
 - **New timeline (4.6 s):** notice 0 - 1.0 s, flame 1.1 - 1.7 s, pick up 1.8 - 2.6 s (bite at 2.2 s), eat 2.6 - 4.6 s (lick from 4.2 s).
 - Not proven on the phone: bug speed, range and size, the lean, and how the flame follows. Tune after seeing it.
 
+## v4.18 - the bug: colour, death, check, faking, chase, jump
+Changes to the "found something" routine (v4.16 / v4.17). It is now a phase machine; the run is **5.1 s**, or about **7.1 s** (plus the hop) when the bug fakes its death.
+
+| Phase | Time | What happens |
+|---|---|---|
+| Notice | 1.1 s | The bug darts about on the icon; the head follows it in step |
+| Small flame | 0.6 s | 75% size, 90 particles per second, aimed at the bug. **The flame reaches it at 0.2 s: the bug stops and dies where it is** |
+| Check | 0.6 s (0.3 s before a fake death) | Mouth closed, a couple of small nods, the neck bows a little deeper; the bug lies on its back |
+| Revive (30% of runs, once) | 0.3 s | The bug twitches and flips back onto its legs with a hop |
+| Chase | 0.9 s (0.6 s after a hop) | The bug runs for the icon's far edge (140 units per second, ping-pong); one snap at it that misses |
+| Small flame, check | as above | The second kill is final |
+| Pick up | 0.8 s | Bow all the way, the bite at 0.4 s, the bug is gone |
+| Eat | 2.0 s | About 5 chews with crumbs, then a lick |
+
+- **Random colour:** every time the bug appears it gets a new random colour (any hue, saturation 65 - 90%, brightness 60 - 95%), a lighter outline and darker legs. Dead, it is dimmed with a pale belly.
+- **Dead pose:** on its back, six legs up and curled outward, limp feelers, a short twitch; thin smoke rises from it until it is picked up. The smoke uses **the flame colours you set in the app** (bright at first, darker as it rises; other smoke stays grey).
+- **The bug stays on the icon.** Its ground is the strip from the dragon's front feet (34 model units) to the icon's edge (4 px margin), at most 106 units. On a normal icon that is only about 18 units (roughly 20 px), on a big icon much more. The dragon faces the side with more room. If the strip is shorter than 14 units, the routine does not start and the dragon picks another move.
+- **The neck bow adapts** (`State.lowerDx`) so the mouth reaches the bug anywhere in the strip, even right under the chin.
+- **Jump:** a fleeing bug that reaches the icon's edge jumps (a 0.35 s arc with a spin) to the neighbour in the same row on that side, if there is one with room (once per run). The dragon crouches and **hops after it** (the normal hop move), lands facing the same way, and the chase goes on there for 0.6 s. With no neighbour the bug turns back and is cornered.
+- Not changed: the real fire breath (no scorching from the small flame), the 0.5 s scan wait, the bar read.
+- Not proven on the phone: the bug size and speed, the 30% chance, the strip size on normal icons, the join between the hop and the chase. Tune after seeing it.
+

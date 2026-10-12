@@ -37,21 +37,39 @@ private const val SCAN_WAIT_MAX_MS = 2500L
 /** The dragon appears this long after the scan has finished. */
 private const val APPEAR_AFTER_SCAN_MS = 400L
 
-/** "Found something" routine (v4.16), seconds: notice, small flame, pick up, chew, lick. Total 4.4 s. */
-private const val FG_NOTICE_END = 1.0f
-private const val FG_FIRE_ON = 1.1f
-private const val FG_FIRE_OFF = 1.7f
-private const val FG_PICK_START = 1.8f
-private const val FG_BITE = 2.2f
-private const val FG_CHEW_START = 2.6f
-private const val FG_LICK_START = 4.2f
-private const val FG_END = 4.6f
-/** The bug darts along the ground between these distances in front of the dragon (model units from its origin); it settles in the near-mouth range before the pick-up. */
-private const val BUG_MIN = 64f
-private const val BUG_MAX = 104f
-private const val BUG_SETTLE_MIN = 90f
-private const val BUG_SPEED = 85f        // model units per second while darting
-private const val BUG_SETTLE_SPEED = 90f
+/** "Found something" routine, phases and their lengths in seconds (v4.18). Normal run 5.1 s; when the bug fakes its death about 7.1 s, plus the hop. */
+private const val FP_NOTICE = 0
+private const val FP_FLAME = 1
+private const val FP_CHECK = 2
+private const val FP_REVIVE = 3
+private const val FP_CHASE = 4
+private const val FP_PICK = 5
+private const val FP_EAT = 6
+private const val D_NOTICE = 1.1f
+private const val D_FLAME = 0.6f             // the small flame burns this long; the bug is hit 0.2 s in
+private const val HIT_AT = 0.2f
+private const val D_CHECK = 0.6f
+private const val D_CHECK_FAKE = 0.3f        // a shorter check before the bug comes back to life
+private const val D_REVIVE = 0.3f
+private const val D_CHASE = 0.9f
+private const val D_CHASE_AFTER_HOP = 0.6f
+private const val D_PICK = 0.8f
+private const val PICK_BITE = 0.4f
+private const val D_EAT = 2.0f
+private const val EAT_LICK = 1.6f
+private const val REVIVE_CHANCE = 0.30f
+/** The bug's ground, model units in front of the dragon's origin: from the front feet to the icon's edge (never the gap), at most BUG_MAX. */
+private const val BUG_FRONT = 34f
+private const val BUG_MAX = 106f
+private const val BUG_MIN_ROOM = 14f         // less room than this: the routine does not start
+private const val BUG_SPEED = 85f            // model units per second while darting
+private const val BUG_FLEE_SPEED = 140f
+private const val BUG_EDGE_MARGIN = 4f       // px kept from the icon's edge
+private const val BUG_JUMP_S = 0.35f
+private const val BUG_ALIVE = 0
+private const val BUG_DEAD = 1
+private const val BUG_FLIP = 2
+private const val BUG_JUMP = 3
 
 /** Body rise / sink with each wing flap, in model units (about 13% of the wing length), and the nose-up tilt on the upstroke in radians (about 4.5 degrees). */
 private const val FLAP_BOB = 9f
@@ -131,20 +149,44 @@ class DragonView(context: Context) : View(context) {
     private var sleepDur = 4f           // seconds asleep (never more than 6)
     private var sleepAfterWalk = false  // a few steps first, then lie down
     private var scratchDur = 2.5f
-    private var fgDir = 1f                 // found-something routine: facing, spot position, flame and crumb bookkeeping
+    private var fgDir = 1f                 // found-something routine: facing (the way the bug is), the bug's spot, flame and crumb bookkeeping
     private var fgSpotX = 0f
     private var fgSpotY = 0f
     private var fgAcc = 0f
-    private var bugM = 80f                 // the bug: distance in front of the dragon (model units), goal, pause left, facing, moving
+    private var fgPhase = 0
+    private var fgT = 0f                   // clock of the current phase
+    private var fgWillRevive = false
+    private var fgRevived = false
+    private var fgJumped = false
+    private var fgHit = false
+    private var fgSnapped = false
+    private var fgChaseDur = D_CHASE
+    private var fgAnchorX = 0f             // x the bug's ground is measured from: the dragon's x, or where it will land after the hop
+    private var fgLandX = 0f
+    private var fgAimX = 0f                // where the small flame aims: the bug's position with a tiny lag
+    private var fgAimY = 0f
+    private var bugOn = false
+    private var bugSt = BUG_ALIVE
+    private var bugT = 0f                  // clock of the bug's state
+    private var bugIcon = 0
+    private var bugM = 80f                 // distance in front of the anchor (model units), darting goal, pause left, facing, moving, fleeing, running forward
     private var bugGoal = 100f
     private var bugPause = 0f
     private var bugDir = 1f
     private var bugMoving = false
-    private var fgAimX = 0f                // where the small flame aims: the bug's position with a tiny lag
-    private var fgAimY = 0f
-    private val bugFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = Color.rgb(74, 58, 31) }
-    private val bugEdge = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 0.8f; strokeCap = Paint.Cap.ROUND; color = Color.rgb(240, 226, 192) }
-    private val bugLeg = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 0.9f; strokeCap = Paint.Cap.ROUND; color = Color.rgb(46, 36, 20) }
+    private var bugFlee = false
+    private var bugFwd = true
+    private var bugWx = 0f; private var bugWy = 0f               // world position on the ground
+    private var bugAirX = 0f; private var bugAirY = 0f           // world position while it jumps
+    private var bugJx0 = 0f; private var bugJy0 = 0f; private var bugJx1 = 0f; private var bugJy1 = 0f
+    private var bugJumpIcon = 0
+    private var bugJumpM = 0f
+    private var bugSmoke = 0f
+    private var bugH = 0f; private var bugS = 0.8f; private var bugV = 0.8f      // the bug's colour (hue, saturation, value): new every time it appears
+    private val hsv = FloatArray(3)
+    private val bugFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val bugEdge = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 0.8f; strokeCap = Paint.Cap.ROUND }
+    private val bugLeg = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 0.9f; strokeCap = Paint.Cap.ROUND }
     private val bugR = RectF()
     private var fgCrumb = 0
     private val hl2 = FloatArray(2)
@@ -738,7 +780,7 @@ class DragonView(context: Context) : View(context) {
     private fun land(i: Int, silent: Boolean, x: Float? = null) {
         iconIdx = i.coerceIn(0, icons.size - 1)
         st.x = x ?: (if (silent && ic(iconIdx).big) landX(iconIdx) else sitX(iconIdx)); st.y = sitY(iconIdx)
-        air = false; mode = Mode.IDLE; then = null; path = null
+        air = false; mode = Mode.IDLE; then = null; path = null; bugOn = false
         st.rest = 0f; st.scratch = 0f; sleepAfterWalk = false
         timer = rnd(1.4f, 3.6f)
         // face the screen edge on outer columns so the tail stays on screen
@@ -876,43 +918,135 @@ class DragonView(context: Context) : View(context) {
         mode = Mode.SCRATCH; t = 0f; scratchDur = rnd(2.4f, 3.8f); st.scratchPh = 0f
     }
 
-    /** Found something on the ground: stare, a small flame at it, pick it up, chew. Ground only; nothing is scorched. */
-    private fun startForage() {
-        mode = Mode.FORAGE; t = 0f; fgAcc = 0f; fgCrumb = 0; ncr = 0
-        fgDir = if (faceT >= 0f) 1f else -1f
-        faceT = fgDir
-        bugM = rnd(72f, 96f); bugPause = rnd(0.1f, 0.25f); bugMoving = false; bugDir = if (Random.nextBoolean()) 1f else -1f
-        do { bugGoal = rnd(BUG_MIN, BUG_MAX) } while (abs(bugGoal - bugM) < 12f)
-        fgAimX = st.x + fgDir * bugM * ds; fgAimY = st.y
-        sleepAfterWalk = false
+    /** Room for the bug on icon [i], ahead of x [ax] in direction [dir]: from the front feet to the icon's edge (never the gap), at most [BUG_MAX]. */
+    private fun stripHiOf(i: Int, ax: Float, dir: Float): Float {
+        val r = ic(i).r
+        val edge = if (dir > 0f) (r.right - BUG_EDGE_MARGIN - ax) / ds else (ax - (r.left + BUG_EDGE_MARGIN)) / ds
+        return min(BUG_MAX, edge)
     }
 
-    /** The bug darts in short runs with small pauses; from just before the flame ends it settles near the mouth and stays. */
-    private fun moveBug(dt: Float) {
-        if (t >= FG_FIRE_OFF - 0.2f) {
-            val goal = clampF(bugM, BUG_SETTLE_MIN, BUG_MAX)
-            val d = goal - bugM
-            val stp = min(abs(d), BUG_SETTLE_SPEED * dt)
+    /**
+     * Found something on the ground: a bug darts about on the icon, the dragon watches it, burns it with a small flame, checks it is dead,
+     * picks it up and chews. Sometimes the bug was only faking: it runs, may jump to the next icon (the dragon hops after it), and is burnt again.
+     * Ground only; nothing is scorched. Returns false (nothing starts) when the icon leaves the bug too little room.
+     */
+    private fun startForage(): Boolean {
+        if (icons.isEmpty()) return false
+        val face = if (faceT >= 0f) 1f else -1f
+        val hF = stripHiOf(iconIdx, st.x, face); val hO = stripHiOf(iconIdx, st.x, -face)
+        val dir = if (hO > hF + 6f) -face else face
+        val hi = if (dir == face) hF else hO
+        if (hi - BUG_FRONT < BUG_MIN_ROOM) return false
+        mode = Mode.FORAGE; t = 0f; fgAcc = 0f; fgCrumb = 0; ncr = 0
+        fgDir = dir; faceT = dir
+        fgPhase = FP_NOTICE; fgT = 0f
+        fgWillRevive = Random.nextFloat() < REVIVE_CHANCE; fgRevived = false; fgJumped = false; fgHit = false; fgSnapped = false; fgChaseDur = D_CHASE
+        fgAnchorX = st.x
+        bugOn = true; bugSt = BUG_ALIVE; bugT = 0f; bugIcon = iconIdx
+        bugFlee = false; bugFwd = true; bugMoving = false; bugSmoke = 0f
+        bugM = BUG_FRONT + (hi - BUG_FRONT) * rnd(0.3f, 0.8f)
+        bugPause = rnd(0.1f, 0.25f); bugDir = if (Random.nextBoolean()) 1f else -1f
+        newBugGoal(BUG_FRONT, hi)
+        bugH = rnd(0f, 360f); bugS = rnd(0.65f, 0.9f); bugV = rnd(0.6f, 0.95f)
+        bugWx = fgAnchorX + fgDir * bugM * ds; bugWy = sitY(iconIdx)
+        fgSpotX = bugWx; fgSpotY = bugWy; fgAimX = bugWx; fgAimY = bugWy
+        sleepAfterWalk = false
+        return true
+    }
+
+    private fun newBugGoal(lo: Float, hi: Float) {
+        val minStep = min(12f, (hi - lo) * 0.35f)
+        var n = 0
+        do { bugGoal = rnd(lo, hi) } while (abs(bugGoal - bugM) < minStep && ++n < 12)
+    }
+
+    private fun killBug() { bugSt = BUG_DEAD; bugT = 0f; bugMoving = false; bugSmoke = 0f; fgHit = true }
+    private fun reviveBug() { bugSt = BUG_FLIP; bugT = 0f; bugMoving = false }
+
+    /** Runs from the frame loop while the bug is on. */
+    private fun updateBug(dt: Float) {
+        bugT += dt
+        when (bugSt) {
+            BUG_ALIVE -> aliveBug(dt)
+            BUG_FLIP -> if (bugT >= D_REVIVE) { bugSt = BUG_ALIVE; bugT = 0f; bugFlee = true; bugFwd = true; bugPause = 0f }
+            BUG_JUMP -> {
+                val u = min(1f, bugT / BUG_JUMP_S)
+                bugAirX = bugJx0 + (bugJx1 - bugJx0) * u
+                bugAirY = bugJy0 + (bugJy1 - bugJy0) * u - 4f * u * (1f - u) * size * 0.5f
+                if (u >= 1f) {
+                    bugIcon = bugJumpIcon; fgAnchorX = fgLandX; bugM = bugJumpM
+                    bugSt = BUG_ALIVE; bugT = 0f; bugFwd = true; bugPause = 0f
+                    bugWx = fgAnchorX + fgDir * bugM * ds; bugWy = sitY(bugIcon)
+                }
+            }
+            else -> {
+                // dead: thin smoke in the fire's colour until it is picked up
+                bugSmoke += dt * 6f * (1f - 0.7f * smooth(0f, 1.6f, bugT)) * (0.4f + 0.6f * pq)
+                while (bugSmoke >= 1f) { bugSmoke -= 1f; addSmoke(bugWx + rnd(-1f, 1f) * 1.5f * sc, bugWy - 4f * sc, -1f, 0.28f) }
+            }
+        }
+    }
+
+    /** Alive: darts in short runs with pauses; fleeing: runs for the icon's far edge, jumps to the next icon (once) or turns back. Never leaves the icon's ground. */
+    private fun aliveBug(dt: Float) {
+        val lo = BUG_FRONT; val hi = max(lo + 2f, stripHiOf(bugIcon, fgAnchorX, fgDir))
+        if (bugFlee) {
+            val goal = if (bugFwd) hi else lo
+            val d = goal - bugM; val stp = min(abs(d), BUG_FLEE_SPEED * dt)
             bugM += if (d > 0f) stp else -stp
-            bugMoving = abs(d) > 0.5f
             if (stp > 0f) bugDir = if (d > 0f) 1f else -1f
-            return
+            bugMoving = true
+            if (abs(goal - bugM) < 0.5f) {
+                if (bugFwd && !fgJumped && tryBugJump()) return
+                bugFwd = !bugFwd
+            }
+        } else if (bugPause > 0f) {
+            bugPause -= dt; bugMoving = false
+        } else {
+            val d = bugGoal - bugM; val stp = min(abs(d), BUG_SPEED * dt)
+            bugM += if (d > 0f) stp else -stp
+            if (stp > 0f) bugDir = if (d > 0f) 1f else -1f
+            bugMoving = true
+            if (abs(bugGoal - bugM) < 0.5f) { bugPause = rnd(0.12f, 0.35f); newBugGoal(lo, hi) }
         }
-        if (bugPause > 0f) { bugPause -= dt; bugMoving = false; return }
-        val d = bugGoal - bugM
-        val stp = min(abs(d), BUG_SPEED * dt)
-        bugM += if (d > 0f) stp else -stp
-        bugDir = if (d > 0f) 1f else -1f
-        bugMoving = true
-        if (abs(bugGoal - bugM) < 0.5f) {
-            bugPause = rnd(0.12f, 0.35f)
-            do { bugGoal = rnd(BUG_MIN, BUG_MAX) } while (abs(bugGoal - bugM) < 12f)
+        bugM = clampF(bugM, lo, hi)
+        bugWx = fgAnchorX + fgDir * bugM * ds; bugWy = sitY(bugIcon)
+    }
+
+    /** The fleeing bug reached the icon's edge: jump to the neighbour in the same row on that side, if there is one with room; the dragon hops after it. */
+    private fun tryBugJump(): Boolean {
+        val c = ic(bugIcon)
+        var best = -1; var bd = Float.MAX_VALUE
+        for (k in neighbors(bugIcon)) {
+            val o = icons[k].r
+            if (abs(o.centerY() - c.r.centerY()) > size * 0.6f) continue
+            val dx = (o.centerX() - c.r.centerX()) * fgDir
+            if (dx > 0f && dx < bd) { bd = dx; best = k }
         }
+        if (best < 0) return false
+        val lx = landX(best)
+        val hi2 = stripHiOf(best, lx, fgDir)
+        if (hi2 - BUG_FRONT < BUG_MIN_ROOM) return false
+        fgJumped = true; fgLandX = lx
+        bugJumpIcon = best; bugJumpM = BUG_FRONT + (hi2 - BUG_FRONT) * 0.65f
+        bugSt = BUG_JUMP; bugT = 0f; bugMoving = false
+        bugJx0 = bugWx; bugJy0 = bugWy; bugJx1 = lx + fgDir * bugJumpM * ds; bugJy1 = sitY(best)
+        val j = best
+        takeOff(lx, sitY(j), { land(j, false, lx); resumeAfterHop() }, true, false)
+        return true
+    }
+
+    /** The dragon landed on the bug's new icon: the chase goes on there. */
+    private fun resumeAfterHop() {
+        faceT = fgDir
+        mode = Mode.FORAGE; t = 0f
+        fgPhase = FP_CHASE; fgT = 0f; fgChaseDur = D_CHASE_AFTER_HOP; fgSnapped = false
+        fgAnchorX = st.x; bugIcon = iconIdx; bugOn = true
     }
 
     private fun doAction(kind: String) {
         when (kind) {
-            "forage" -> startForage()
+            "forage" -> if (!startForage()) timer = rnd(0.6f, 1.2f)
             "sleep" -> startSleep()
             "scratch" -> startScratch()
             "walk" -> { if (!startWalk()) timer = rnd(1f, 2f) }
@@ -984,11 +1118,11 @@ class DragonView(context: Context) : View(context) {
         nf++
     }
 
-    private fun addSmoke(x: Float, y: Float, lit: Float) {
+    private fun addSmoke(x: Float, y: Float, lit: Float, sizeMul: Float = 1f) {
         if (ns >= capS) return
         sX[ns] = x; sY[ns] = y
         sVx[ns] = rnd(-10f, 10f) * sc; sVy[ns] = -rnd(28f, 56f) * sc
-        sAge[ns] = 0f; sLife[ns] = rnd(1.3f, 2.4f); sSize[ns] = rnd(10f, 17f) * sc
+        sAge[ns] = 0f; sLife[ns] = rnd(1.3f, 2.4f); sSize[ns] = rnd(10f, 17f) * sc * sizeMul
         sRot[ns] = rnd(0f, TAU); sRv[ns] = rnd(-0.7f, 0.7f); sLit[ns] = lit
         sSeed[ns] = rnd(0f, TAU); sVar[ns] = Random.nextInt(3)
         ns++
@@ -1059,11 +1193,13 @@ class DragonView(context: Context) : View(context) {
         st.wingPh += dt * TAU * flapHz
         st.crouch = if (mode == Mode.CROUCH) clampF(t / dur * 1.15f, 0f, 1f) else max(0f, st.crouch - dt * (if (air) 6f else 4.5f))
 
+        if (bugOn && mode != Mode.FORAGE && mode != Mode.CROUCH && mode != Mode.FLY) bugOn = false     // the routine was interrupted
+        if (bugOn) updateBug(dt)
         val ox = st.x; val oy = st.y
         var firing = false
         when (mode) {
             Mode.IDLE -> { timer -= dt; if (timer <= 0f) chooseNext() }
-            Mode.WALK -> if (!sleepAfterWalk && st.walk > 0.9f && Random.nextFloat() < dt * 0.1f) startForage() else {
+            Mode.WALK -> if (!sleepAfterWalk && st.walk > 0.9f && Random.nextFloat() < dt * 0.1f && startForage()) Unit else {
                 val spd = 26f * sc * st.walk * st.walk
                 val dx = walkTo - st.x; val stp = min(abs(dx), spd * dt)
                 st.x += (if (dx > 0f) stp else -stp); st.gait += stp / ds / 46.7f
@@ -1098,54 +1234,79 @@ class DragonView(context: Context) : View(context) {
                 if (t >= dur) { val cb = then; then = null; cb?.invoke() }
             }
             Mode.FORAGE -> {
-                t += dt
-                moveBug(dt)
-                fgSpotX = st.x + fgDir * bugM * ds; fgSpotY = st.y
+                fgT += dt
+                if (bugSt == BUG_JUMP) { fgSpotX = bugAirX; fgSpotY = bugAirY } else if (bugOn) { fgSpotX = bugWx; fgSpotY = bugWy }
                 fgAimX += (fgSpotX - fgAimX) * min(1f, dt * 20f); fgAimY = fgSpotY
-                val lean = 0.15f * ((bugM - BUG_MIN) / (BUG_MAX - BUG_MIN) - 0.5f)     // bows a little more when the bug is farther away
-                // the neck bows towards the spot, a bit while staring, all the way for the pick-up, then back up
-                st.lower = when {
-                    t < FG_NOTICE_END -> (0.55f + lean) * smooth(0f, 0.35f, t)
-                    t < FG_PICK_START -> 0.55f + lean
-                    t < FG_BITE -> lerp3(0.55f + lean, 1f, smooth(FG_PICK_START, FG_BITE, t))
-                    t < FG_CHEW_START -> 1f - 0.85f * smooth(FG_BITE + 0.1f, FG_CHEW_START, t)
-                    else -> 0.15f * (1f - smooth(FG_CHEW_START, FG_CHEW_START + 1f, t))
-                }
-                model.headLocal(st.sp, st.walk, hl2, st.lower)
-                val bx = st.x + fgDir * hl2[0] * ds; val by = st.y + (hl2[1] + st.bob) * ds
-                val toSpot = clampF(atan2(fgSpotY - by, max(8f, abs(fgSpotX - bx))), -0.6f, 1.2f)
-                headGoal = when {
-                    t < FG_NOTICE_END -> toSpot + 0.03f * sin(t * 10f)          // a small sniffing nod
-                    t < FG_BITE + 0.1f -> toSpot
-                    t < FG_CHEW_START -> lerp3(toSpot, 0.2f, smooth(FG_BITE + 0.1f, FG_CHEW_START, t))
-                    t < FG_LICK_START -> 0.2f
-                    else -> 0.2f - 0.25f * sin(PI.toFloat() * (t - FG_LICK_START) / (FG_END - FG_LICK_START))
-                }
-                // mouth: closed while staring, open for the flame, open for the pick-up and closing on it, chewing, one slow lick
-                st.mouth = when {
-                    t < FG_FIRE_ON -> 0f
-                    t < FG_PICK_START -> smooth(FG_FIRE_ON, FG_FIRE_ON + 0.12f, t) * 0.7f * (1f - smooth(FG_FIRE_OFF, FG_PICK_START, t))
-                    t < FG_CHEW_START -> 0.6f * smooth(FG_PICK_START + 0.1f, FG_PICK_START + 0.3f, t) * (1f - smooth(FG_BITE, FG_BITE + 0.1f, t))
-                    t < FG_LICK_START -> { val u = t - FG_CHEW_START; (0.05f + 0.18f * (0.5f - 0.5f * cos(u * TAU * 3.3f))) * (1f - smooth(FG_LICK_START - 0.15f, FG_LICK_START, t)) }
-                    t < FG_END -> 0.4f * sin(PI.toFloat() * (t - FG_LICK_START) / (FG_END - FG_LICK_START))
-                    else -> 0f
-                }
-                st.mouthGlow = if (t >= FG_FIRE_ON && t < FG_PICK_START) -1f else 0f    // flame glow in the mouth only while the small flame burns
-                if (t >= FG_FIRE_ON && t < FG_FIRE_OFF) {
-                    model.mouthPos(st, mp)
-                    fgAcc += dt * 90f * (0.45f + 0.55f * pq)
-                    while (fgAcc >= 1f) { fgAcc -= 1f; emitFlame(mp[0], mp[1], fgAimX, fgAimY, 0.75f, 60f) }     // small: no charge-up, no scorching; aims at the moving bug
-                }
-                // crumbs fall from the mouth while it chews
-                while (fgCrumb < 5 && t >= FG_CHEW_START + 0.15f + 0.3f * fgCrumb) {
-                    fgCrumb++
-                    if (ncr < crX.size) {
-                        model.mouthPos(st, mp)
-                        crX[ncr] = mp[0]; crY[ncr] = mp[1]; crVx[ncr] = fgDir * rnd(10f, 45f) * sc; crVy[ncr] = -rnd(20f, 70f) * sc; crAge[ncr] = 0f
-                        ncr++
+                // the neck bows so that the mouth reaches the bug wherever it is on the icon, even right under the chin
+                val bm = clampF((fgSpotX - st.x) * fgDir / ds, -20f, 140f)
+                st.lowerDx = clampF(bm - 56.5f, -14f, 50f)
+                var lowT = 0f; var mouthT = 0f; var glow = 0f; var nod = 0f
+                when (fgPhase) {
+                    FP_NOTICE -> {
+                        lowT = 0.55f * smooth(0f, 0.35f, fgT)
+                        nod = 0.03f * sin(fgT * 10f)                                // a small sniffing nod
+                        if (fgT >= D_NOTICE) { fgPhase = FP_FLAME; fgT = 0f; fgHit = false }
+                    }
+                    FP_FLAME -> {
+                        lowT = 0.55f
+                        mouthT = smooth(0f, 0.12f, fgT) * 0.7f; glow = -1f          // flame glow in the mouth only while the small flame burns
+                        if (!fgHit && fgT >= HIT_AT) killBug()                      // the flame reaches the bug: it stops and dies where it is
+                        fgAcc += dt * 90f * (0.45f + 0.55f * pq)
+                        if (fgAcc >= 1f) model.mouthPos(st, mp)
+                        while (fgAcc >= 1f) { fgAcc -= 1f; emitFlame(mp[0], mp[1], fgAimX, fgAimY, 0.75f, 60f) }     // small: no charge-up, no scorching; aims at the bug
+                        if (fgT >= D_FLAME) { fgPhase = FP_CHECK; fgT = 0f }
+                    }
+                    FP_CHECK -> {
+                        val fake = fgWillRevive && !fgRevived
+                        val dur = if (fake) D_CHECK_FAKE else D_CHECK
+                        lowT = lerp3(0.55f, 0.75f, smooth(0f, dur, fgT))
+                        mouthT = 0.7f * (1f - smooth(0f, 0.1f, fgT)); glow = if (fgT < 0.1f) -1f else 0f
+                        nod = 0.04f * sin(fgT * 14f)                                // checks it is dead
+                        if (fgT >= dur) { if (fake) { reviveBug(); fgPhase = FP_REVIVE } else fgPhase = FP_PICK; fgT = 0f }
+                    }
+                    FP_REVIVE -> {
+                        lowT = lerp3(0.75f, 0.55f, smooth(0f, D_REVIVE, fgT))
+                        if (fgT >= D_REVIVE) { fgRevived = true; fgPhase = FP_CHASE; fgT = 0f; fgChaseDur = D_CHASE; fgSnapped = false }
+                    }
+                    FP_CHASE -> {
+                        val snapAt = if (fgJumped) 0.3f else 0.5f                   // one snap at the bug, which gets away
+                        val u = (fgT - (snapAt - 0.2f)) / 0.35f
+                        lowT = 0.55f + 0.45f * (if (u > 0f && u < 1f) sin(PI.toFloat() * u) else 0f)
+                        mouthT = 0.8f * smooth(snapAt - 0.1f, snapAt - 0.02f, fgT) * (1f - smooth(snapAt, snapAt + 0.06f, fgT))
+                        if (fgT >= fgChaseDur) { fgPhase = FP_FLAME; fgT = 0f; fgHit = false }
+                    }
+                    FP_PICK -> {
+                        lowT = if (fgT < PICK_BITE) lerp3(0.75f, 1f, smooth(0f, PICK_BITE, fgT)) else 1f - 0.85f * smooth(PICK_BITE + 0.1f, D_PICK, fgT)
+                        mouthT = 0.6f * smooth(0.1f, 0.3f, fgT) * (1f - smooth(PICK_BITE, PICK_BITE + 0.1f, fgT))
+                        if (bugOn && fgT >= PICK_BITE + 0.05f) bugOn = false        // bitten: the bug is gone
+                        if (fgT >= D_PICK) { fgPhase = FP_EAT; fgT = 0f; fgCrumb = 0 }
+                    }
+                    else -> {
+                        lowT = 0.15f * (1f - smooth(0f, 1f, fgT))
+                        mouthT = if (fgT < EAT_LICK) (0.05f + 0.18f * (0.5f - 0.5f * cos(fgT * TAU * 3.3f))) * (1f - smooth(EAT_LICK - 0.15f, EAT_LICK, fgT))
+                            else 0.4f * sin(PI.toFloat() * (fgT - EAT_LICK) / (D_EAT - EAT_LICK))
+                        // crumbs fall from the mouth while it chews
+                        while (fgCrumb < 5 && fgT >= 0.15f + 0.3f * fgCrumb) {
+                            fgCrumb++
+                            if (ncr < crX.size) {
+                                model.mouthPos(st, mp)
+                                crX[ncr] = mp[0]; crY[ncr] = mp[1]; crVx[ncr] = fgDir * rnd(10f, 45f) * sc; crVy[ncr] = -rnd(20f, 70f) * sc; crAge[ncr] = 0f
+                                ncr++
+                            }
+                        }
+                        if (fgT >= D_EAT) { mode = Mode.IDLE; timer = rnd(1.4f, 3f) }
                     }
                 }
-                if (t >= FG_END) { mode = Mode.IDLE; timer = rnd(1.4f, 3f) }
+                st.lower += (lowT - st.lower) * min(1f, dt * 14f)          // smoothed, so the bow does not pop at the start or after the hop
+                model.headLocal(st.sp, st.walk, hl2, st.lower, st.lowerDx)
+                val bx = st.x + fgDir * hl2[0] * ds; val by = st.y + (hl2[1] + st.bob) * ds
+                val toSpot = clampF(atan2(fgSpotY - by, max(8f, abs(fgSpotX - bx))), -0.6f, 1.2f)
+                headGoal = when (fgPhase) {
+                    FP_PICK -> if (fgT < PICK_BITE + 0.1f) toSpot else lerp3(toSpot, 0.2f, smooth(PICK_BITE + 0.1f, D_PICK, fgT))
+                    FP_EAT -> if (fgT < EAT_LICK) 0.2f else 0.2f - 0.25f * sin(PI.toFloat() * (fgT - EAT_LICK) / (D_EAT - EAT_LICK))
+                    else -> toSpot + nod
+                }
+                st.mouth = mouthT; st.mouthGlow = glow
             }
             Mode.FLY -> {
                 t += dt
@@ -1185,7 +1346,7 @@ class DragonView(context: Context) : View(context) {
         val hg = if (firing || mode == Mode.FORAGE) headGoal
         else if (st.scratch > 0.02f) lerp3(model.restHead(st.sp, st.walk) + look * (1f - st.sp), 0.45f + 0.05f * sin(st.scratchPh * 0.5f), st.scratch)
         else model.restHead(st.sp, st.walk) + look * (1f - st.sp)
-        st.head += (hg - st.head) * min(1f, dt * (if (mode == Mode.FORAGE && t < FG_BITE) 22f else 12f))     // 22 per second: the head stays in step with the darting bug
+        st.head += (hg - st.head) * min(1f, dt * (if (mode == Mode.FORAGE && fgPhase <= FP_CHASE) 22f else 12f))     // 22 per second: the head stays in step with the darting bug
 
         val cvx = (st.x - ox) / dt; val cvy = (st.y - oy) / dt
         vx += (cvx - vx) * min(1f, dt * 10f); vy += (cvy - vy) * min(1f, dt * 10f)
@@ -1320,14 +1481,34 @@ class DragonView(context: Context) : View(context) {
         if (layer) c.restoreToCount(saved)
     }
 
-    /** The bug: a dark oval with a pale outline, three legs on each side that wiggle while it moves, two feelers; it faces where it is going. */
+    /** The bug's colours: its random colour, or the dimmed one with a pale belly when it is dead. */
+    private fun bugColors(dead: Boolean) {
+        if (dead) {
+            hsv[0] = bugH; hsv[1] = bugS * 0.45f; hsv[2] = min(1f, bugV * 0.85f); bugFill.color = Color.HSVToColor(hsv)
+            hsv[1] = bugS; hsv[2] = bugV * 0.5f; bugEdge.color = Color.HSVToColor(hsv); bugLeg.color = bugEdge.color
+        } else {
+            hsv[0] = bugH; hsv[1] = bugS; hsv[2] = bugV; bugFill.color = Color.HSVToColor(hsv)
+            hsv[1] = bugS * 0.35f; hsv[2] = min(1f, 0.6f + 0.4f * bugV); bugEdge.color = Color.HSVToColor(hsv)
+            hsv[1] = bugS; hsv[2] = bugV * 0.45f; bugLeg.color = Color.HSVToColor(hsv)
+        }
+    }
+
+    /** The bug: an oval in its random colour with a pale outline, three legs per side that wiggle while it moves, two feelers; dead, it lies on its back. */
     private fun drawBug(c: Canvas) {
+        if (bugSt == BUG_DEAD || (bugSt == BUG_FLIP && bugT < D_REVIVE * 0.5f)) { drawDeadBug(c, bugSt == BUG_FLIP); return }
+        bugColors(false)
+        val jumping = bugSt == BUG_JUMP
+        val flipping = bugSt == BUG_FLIP
+        val px = if (jumping) bugAirX else bugWx
+        val py = if (jumping) bugAirY else bugWy
         val face = fgDir * bugDir
-        val hop = if (bugMoving) abs(sin(time * 18f)) * 1.1f else 0f
-        val amp = if (bugMoving) 0.8f else 0.15f
+        val hop = if (flipping) sin(PI.toFloat() * min(1f, bugT / D_REVIVE)) * 4f else if (bugMoving) abs(sin(time * 18f)) * 1.1f else 0f
+        val amp = if (jumping || flipping) 1f else if (bugMoving) 0.8f else 0.15f
         c.save()
-        c.translate(fgSpotX, fgSpotY - (2.2f + hop) * sc)
-        c.scale(face * sc, sc)
+        c.translate(px, py - (3.6f + hop) * sc)
+        if (jumping) c.rotate(face * 360f * min(1f, bugT / BUG_JUMP_S))
+        val flipY = if (flipping) -1f + 2f * smooth(D_REVIVE * 0.5f, D_REVIVE, bugT) else 1f      // flips back onto its legs
+        c.scale(face * sc, flipY * sc)
         for (k in 0 until 3) {
             val lx = -2.4f + 2.4f * k
             val w = amp * sin(time * 60f + k * 2.1f)
@@ -1337,15 +1518,39 @@ class DragonView(context: Context) : View(context) {
         bugR.set(-4.6f, -2.3f, 2.6f, 2.3f)
         c.drawOval(bugR, bugFill); c.drawOval(bugR, bugEdge)
         c.drawCircle(3.6f, 0f, 1.6f, bugFill); c.drawCircle(3.6f, 0f, 1.6f, bugEdge)
-        val fw = sin(time * 22f) * (if (bugMoving) 0.9f else 0.35f)
+        val fw = sin(time * 22f) * (if (bugMoving || jumping) 0.9f else 0.35f)
         c.drawLine(4.8f, -0.7f, 7.4f, -2.4f + fw, bugLeg)
         c.drawLine(4.8f, 0.7f, 7.4f, 2.4f - fw, bugLeg)
         c.restore()
     }
 
+    /** Dead (or just waking up): on its back, a pale belly, six legs up and curled outward, limp feelers; the legs twitch for a moment. */
+    private fun drawDeadBug(c: Canvas, waking: Boolean) {
+        bugColors(true)
+        val face = fgDir * bugDir
+        val tw = if (waking) 1f else max(0f, 1f - bugT / 0.2f)
+        c.save()
+        c.translate(bugWx, bugWy - 2.4f * sc)
+        c.scale(face * sc, sc)
+        for (k in 0 until 6) {
+            val x0 = -4f + 1.6f * k
+            val sgn = if (k < 3) -1f else 1f
+            val w = tw * sin(time * 50f + k * 1.7f) * 1.1f
+            val x1 = x0 + sgn * 0.9f + w
+            val x2 = x1 + sgn * 1.5f + w * 0.6f
+            c.drawLine(x0, -1.8f, x1, -4.6f, bugLeg)
+            c.drawLine(x1, -4.6f, x2, -6.4f, bugLeg)
+        }
+        bugR.set(-4.8f, -2.2f, 3.4f, 2.4f)
+        c.drawOval(bugR, bugFill); c.drawOval(bugR, bugEdge)
+        c.drawCircle(4.4f, 0.4f, 1.5f, bugFill); c.drawCircle(4.4f, 0.4f, 1.5f, bugEdge)
+        c.drawLine(5.4f, 0.1f, 7.2f, 1.4f, bugLeg); c.drawLine(5.2f, 0.9f, 7f, 2.2f, bugLeg)
+        c.restore()
+    }
+
     /** The pretend find: the bug on the ground until the bite, then crumbs falling from the chewing mouth. */
     private fun drawForage(c: Canvas) {
-        if (mode == Mode.FORAGE && t < FG_BITE + 0.05f) drawBug(c)
+        if (bugOn && (mode == Mode.FORAGE || mode == Mode.CROUCH || mode == Mode.FLY)) drawBug(c)
         for (k in 0 until ncr) {
             crumbPaint.alpha = (255f * (1f - crAge[k] / 0.9f)).toInt().coerceIn(0, 255)
             c.drawCircle(crX[k], crY[k], 2f * sc, crumbPaint)
@@ -1413,6 +1618,14 @@ class DragonView(context: Context) : View(context) {
             val s = sSize[i] * (1f + tt * 3.2f)
             val env = min(1f, tt * 7f) * (1f - tt).pow(1.5f)
             c.save(); c.translate(sX[i], sY[i]); c.rotate(deg(sRot[i]))
+            if (sLit[i] < 0f) {
+                // fire-coloured wisp (the dead bug): the flame colours you chose, bright at first, darker as it rises
+                spritePaint.colorFilter = ramp[(3f + 8f * tt).toInt().coerceIn(0, 15)]
+                spritePaint.alpha = (env * 0.55f * 255f).toInt()
+                dest.set(-s, -s, s, s); c.drawBitmap(smkMid[sVar[i]], null, dest, spritePaint)
+                spritePaint.colorFilter = null
+                c.restore(); continue
+            }
             spritePaint.alpha = (env * 0.3f * (1f - tt * 0.7f) * 255f).toInt()
             dest.set(-s, -s, s, s); c.drawBitmap(smkDark[sVar[i]], null, dest, spritePaint)
             if (tt > 0.2f) {
