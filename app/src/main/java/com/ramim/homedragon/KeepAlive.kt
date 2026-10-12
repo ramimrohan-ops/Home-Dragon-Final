@@ -15,7 +15,7 @@ import java.util.Locale
  * It stores only event names and times, nothing else.
  */
 object Diag {
-    private const val MAX = 50
+    private const val MAX = 100        // v4.15: mode and bar-read lines make the log busier
 
     private fun sp(c: Context) = c.applicationContext.getSharedPreferences("dragon_diag", Context.MODE_PRIVATE)
 

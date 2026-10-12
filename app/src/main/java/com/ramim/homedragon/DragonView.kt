@@ -37,6 +37,10 @@ private const val SCAN_WAIT_MAX_MS = 2500L
 /** The dragon appears this long after the scan has finished. */
 private const val APPEAR_AFTER_SCAN_MS = 400L
 
+/** Body rise / sink with each wing flap, in model units (about 13% of the wing length), and the nose-up tilt on the upstroke in radians (about 4.5 degrees). */
+private const val FLAP_BOB = 9f
+private const val FLAP_TILT = 0.08f
+
 /** Fade-in time of every appearance (eased in onDraw). */
 private const val FADE_IN_S = 0.4f
 private fun rnd(a: Float, b: Float) = a + Random.nextFloat() * (b - a)
@@ -72,6 +76,7 @@ class DragonView(context: Context) : View(context) {
     private var size = 120f
     private var sc = 2f
     private var ds = 1.2f
+    private var flapAmp = 1f                 // 1 flying, 0.6 breathing fire (smoothed)
     private var offX = 0
     private var offY = 0
     private var usingRegistry = false
@@ -1065,7 +1070,12 @@ class DragonView(context: Context) : View(context) {
         st.face += (faceT - st.face) * min(1f, dt * 11f)
         val wp = if (mode == Mode.FLY) clampF(atan2(vy, max(90f * sc, abs(vx))) * 0.6f, -0.55f, 0.55f) else 0f
         st.pitch += (wp - st.pitch) * min(1f, dt * 7f)
-        st.bob = if (air) sin(st.wingPh) * 3f - 4f * st.sp else sin(time * 2.3f) * 0.5f + sin(st.gait * TAU * 2f) * 1.3f * st.walk
+        // Flap-synced motion (v4.15): the body rises on the downstroke and sinks on the upstroke; the nose lifts a little on the upstroke (peak mid-upstroke, level mid-downstroke).
+        // Both use the wing phase, so they stay in step when the flap rate changes. Blended by sp, and weaker (smoothly) while breathing fire so the aim stays steady.
+        flapAmp += ((if (mode == Mode.FIRE) 0.6f else 1f) - flapAmp) * min(1f, dt * 6f)
+        val idleBob = sin(time * 2.3f) * 0.5f + sin(st.gait * TAU * 2f) * 1.3f * st.walk
+        st.bob = (-sin(st.wingPh) * FLAP_BOB * flapAmp - 4f) * st.sp + idleBob * (1f - st.sp)
+        st.flapTilt = -FLAP_TILT * flapAmp * 0.5f * (1f - cos(st.wingPh)) * st.sp
         st.time = time; st.ds = ds
         // "completely sitting": the landing / crouch / wing-fold animation has finished too
         val settled = st.sp < 0.02f && st.walk < 0.02f && st.crouch < 0.02f && st.mouth < 0.02f &&

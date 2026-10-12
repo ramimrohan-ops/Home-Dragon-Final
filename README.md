@@ -406,3 +406,13 @@ Android blocks accessibility services of apps installed outside an app store. Th
 - The only work in watch mode is that bar read. **No icon scan** runs without a visible bar. When the bar is visible again, home is found, the mode goes back to full, and the usual single scan (0.5 s) and dragon fade-in (0.4 s) follow.
 - No polling, no repeat reads, nothing new sent to Phone Status. The Log tab shows "Icon finder mode: watch (reading the page bar only)".
 - Not proven on the phone: which event the launcher sends when a folder closes. The Log will show whether the close was caught.
+
+## v4.15 - clearer Log, watch-mode timeout, flap-synced flight
+- **Log: mode changes.** One line per change, such as `Mode: full → watch (launcher on top, no visible page bar)`. Modes: full (home on top), watch (launcher on top, no visible page bar), light (another app, the Home Dragon app, screen off or locked).
+- **Log: bar reads.** One line per page-bar read with what started it and what it found, such as `Bar read (launcher content change): no visible page bar`. Triggers: window change, scroll, launcher content change (watch mode), screen on / unlock, screen state change, Home Dragon app opened or closed. If several triggers come in one wait, the last one is named (in watch mode a read already waiting keeps its first trigger). The Log keeps the newest 100 lines (was 50) because of these lines.
+- **Watch-mode timeout 150 ms** (40 ms in the other modes): Android drops repeated events of one type closer than that, so a redrawing launcher wakes the icon finder less. A folder close can be noticed up to about 0.15 s later.
+- **Flap-synced body motion.** While flying, the body rises on the downstroke and sinks on the upstroke (9 model units, about 13% of the wing length; before it was 3 units in the opposite direction). It uses the wing phase, so it stays in step when the flap rate changes. It blends in and out with take-off and landing.
+- **Nose-up on the upstroke.** The nose lifts about 4.5° (0.08 rad), peak in the middle of the upstroke, level in the middle of the downstroke. It is added to the flight-path tilt without smoothing, so it keeps its timing.
+- While breathing fire both motions are 60% of their size (smoothly), so the aim stays steady.
+- Not changed: scan wait 0.5 s, bar read 0.4 s, no polling, Phone Status link. The sizes (9 units, 0.08 rad) are estimates: tune after seeing them on the phone.
+

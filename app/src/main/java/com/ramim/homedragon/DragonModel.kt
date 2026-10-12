@@ -38,6 +38,8 @@ class DragonModel {
         var face = 1f; var ds = 1f
         var sp = 0f            // 0 perched, 1 flying
         var pitch = 0f
+        /** Extra nose tilt in step with the wing flap (negative = nose up); added to [pitch], not smoothed. */
+        var flapTilt = 0f
         var head = 0.28f       // absolute head angle
         var mouth = 0f
         /** Strength of the flame glow inside the open mouth; negative = follow [mouth] (the default). The charge-up keeps it at 0 until the breath starts. */
@@ -808,7 +810,8 @@ class DragonModel {
         c.save()
         c.translate(s.x, s.y)
         c.scale(s.face * s.ds, s.ds)
-        if (s.pitch != 0f) { c.translate(0f, -40f); c.rotate(deg(s.pitch)); c.translate(0f, 40f) }
+        val pt = s.pitch + s.flapTilt
+        if (pt != 0f) { c.translate(0f, -40f); c.rotate(deg(pt)); c.translate(0f, 40f) }
         if (groupAlpha < 0.995f) {
             val sv = c.saveLayerAlpha(-360f, -260f, 360f, 90f, (groupAlpha * 255f).toInt())
             drawAwake(c, s, true)
@@ -938,7 +941,8 @@ class DragonModel {
     private val tv = FloatArray(2)
     private fun toView(s: State, mx: Float, my: Float) {
         var x = mx; var y = my
-        if (s.pitch != 0f) { val dx = x; val dy = y + 40f; val cc = cos(s.pitch); val ss = sin(s.pitch); x = dx * cc - dy * ss; y = dx * ss + dy * cc - 40f }
+        val pt = s.pitch + s.flapTilt
+        if (pt != 0f) { val dx = x; val dy = y + 40f; val cc = cos(pt); val ss = sin(pt); x = dx * cc - dy * ss; y = dx * ss + dy * cc - 40f }
         tv[0] = s.x + s.face * s.ds * x; tv[1] = s.y + s.ds * y
     }
 
@@ -976,8 +980,9 @@ class DragonModel {
         val lx = 36f; val ly = 2.5f
         var mx = hx + cos(hang) * lx - sin(hang) * ly
         var my = hy + sin(hang) * lx + cos(hang) * ly
-        if (s.pitch != 0f) {
-            val dx = mx; val dy = my + 40f; val cc = cos(s.pitch); val ss = sin(s.pitch)
+        val pt = s.pitch + s.flapTilt
+        if (pt != 0f) {
+            val dx = mx; val dy = my + 40f; val cc = cos(pt); val ss = sin(pt)
             mx = dx * cc - dy * ss; my = dx * ss + dy * cc - 40f
         }
         out[0] = s.x + s.face * s.ds * mx; out[1] = s.y + s.ds * my

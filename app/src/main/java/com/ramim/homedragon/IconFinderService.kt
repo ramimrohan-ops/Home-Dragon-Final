@@ -25,6 +25,9 @@ private const val SETTLE_MS = 500L
 private const val MODE_FULL = 0        // home screen on top
 private const val MODE_WATCH = 1       // launcher on top, no visible page bar: reads the bar only
 private const val MODE_LIGHT = 2       // anything else: window changes only
+/** Android drops repeated events of one type that come closer than this. Watch mode: the launcher redraws a lot, so repeated content changes are cut by the system. */
+private const val WATCH_TIMEOUT_MS = 150L
+private const val NORMAL_TIMEOUT_MS = 40L
 
 /** The page bar is read once, this long after the last window change, swipe or scroll, screen on / unlock, or Home Dragon app open / close. */
 private const val BAR_READ_MS = 400L
@@ -68,13 +71,13 @@ class IconFinderService : AccessibilityService() {
         IconRegistry.serviceActive = true
         IconRegistry.onHome = false                      // proven below (launcher on top and its page number readable), never assumed
         IconRegistry.page = 0; IconRegistry.pages = 0; IconRegistry.noItems = false
-        IconRegistry.recheckNow = { handler.post { scheduleBarRead() } }
+        IconRegistry.recheckNow = { handler.post { scheduleBarRead("Home Dragon app opened or closed") } }
         Diag.log(this, "Icon finder connected")
         mode = MODE_FULL                                 // Android starts a connected service in full mode
         launcherTop = false
         barPending = false
         IconRegistry.light = false; IconRegistry.watch = false
-        IconRegistry.modeChanged = { handler.post { updateMode(); if (!IconRegistry.idle) scheduleBarRead() } }
+        IconRegistry.modeChanged = { handler.post { updateMode(); if (!IconRegistry.idle) scheduleBarRead("screen state change") } }
         KeepAlive.ensureDragon(this, "icon finder connected")
         IconRegistry.listener?.invoke()
         if (!signalReceiverOn) {
@@ -125,7 +128,7 @@ class IconFinderService : AccessibilityService() {
                 }
                 else -> {                                   // screen on / off / unlocked
                     publishRun()
-                    scheduleBarRead()                       // the page bar is read once, 0.4 s later
+                    scheduleBarRead("screen on / unlock")   // the page bar is read once, 0.4 s later
                 }
             }
         }
@@ -363,33 +366,39 @@ class IconFinderService : AccessibilityService() {
             val active = try { rootInActiveWindow?.packageName?.toString() } catch (e: Exception) { null }
             if (active != launcher) {
                 notHomeWhy = "another app in front (usage access)"
+                Diag.log(this, "Bar read ($barWhy): $notHomeWhy")
                 launcherTop = false
                 leaveHome()
                 updateMode()
                 return
             }
         }
-        homeFromWindows()?.let { applyCheck(it) }
+        val c = homeFromWindows()
+        Diag.log(this, "Bar read ($barWhy): " + (if (c == null) "window list unavailable, last answer kept" else if (c.home) "page bar visible, page ${c.page} of ${c.pages}" else notHomeWhy))
+        c?.let { applyCheck(it) }
         updateMode()
     }
 
     private var barPending = false          // a bar read is waiting in the handler
+    private var barWhy = ""                 // what started the waiting bar read (for the Log)
     private val barRead = Runnable { barPending = false; recheckHome() }
 
     /** One page-bar read in [BAR_READ_MS]; every new trigger restarts the wait. */
-    private fun scheduleBarRead() {
+    private fun scheduleBarRead(why: String) {
         handler.removeCallbacks(barRead)
+        barWhy = why
         barPending = true
         handler.postDelayed(barRead, BAR_READ_MS)
     }
 
     /** Watch mode: the launcher redraws all the time, so a read that is already waiting is left alone (the wait is not restarted). */
-    private fun scheduleBarReadOnce() {
+    private fun scheduleBarReadOnce(why: String) {
         if (barPending) return
-        scheduleBarRead()
+        scheduleBarRead(why)
     }
 
     private var mode = MODE_FULL            // which events are delivered (see updateMode)
+    private fun modeName(m: Int) = if (m == MODE_FULL) "full" else if (m == MODE_WATCH) "watch" else "light"
     private var launcherTop = false         // the launcher is the top application window (home, Recents, a folder, the app vault)
 
     /**
@@ -407,6 +416,7 @@ class IconFinderService : AccessibilityService() {
         if (want == mode) return
         try {
             val info = getServiceInfo() ?: return
+            info.notificationTimeout = if (want == MODE_WATCH) WATCH_TIMEOUT_MS else NORMAL_TIMEOUT_MS
             val window = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or AccessibilityEvent.TYPE_WINDOWS_CHANGED
             info.eventTypes = when (want) {
                 MODE_LIGHT -> window
@@ -417,7 +427,13 @@ class IconFinderService : AccessibilityService() {
             info.flags = AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS or
                 AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
             setServiceInfo(info)
+            val was = mode
             mode = want
+            Diag.log(this, "Mode: " + modeName(was) + " → " + modeName(want) + " (" + (
+                if (IconRegistry.idle) "screen off or locked"
+                else if (want == MODE_FULL) "page bar visible"
+                else if (want == MODE_WATCH) "launcher on top, no visible page bar"
+                else notHomeWhy) + ")")
             IconRegistry.light = want == MODE_LIGHT
             IconRegistry.watch = want == MODE_WATCH
         } catch (_: Throwable) {
@@ -471,7 +487,7 @@ class IconFinderService : AccessibilityService() {
 
         if (type == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
             // Only delivered in watch mode. The launcher redrew (a folder closed, Recents moved): read the bar once, unless a read is waiting.
-            if (pkg == launcher && !IconRegistry.onHome && launcherTop && !IconRegistry.idle) scheduleBarReadOnce()
+            if (pkg == launcher && !IconRegistry.onHome && launcherTop && !IconRegistry.idle) scheduleBarReadOnce("launcher content change")
             return
         }
         if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
@@ -486,7 +502,7 @@ class IconFinderService : AccessibilityService() {
             lastScrollX = event.scrollX
             if (horizontal) IconRegistry.swipeListener?.invoke()
             scanSoon()                                       // any swipe or scroll (pages, app drawer): scan after 0.5 s without further scrolling
-            scheduleBarRead()                                // the page bar is read once, 0.4 s after the scroll stops (Phone Status hears about a page change)
+            scheduleBarRead("scroll")                        // the page bar is read once, 0.4 s after the scroll stops (Phone Status hears about a page change)
             return
         }
         // The launcher window itself changed (home came to front, drawer or folder opened or closed): scan.
@@ -507,7 +523,7 @@ class IconFinderService : AccessibilityService() {
             updateMode()
             return
         }
-        scheduleBarRead()
+        scheduleBarRead("window change")
     }
 
     // ---- scanning: wait for quiet, then scan once ----
