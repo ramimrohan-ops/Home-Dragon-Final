@@ -73,9 +73,10 @@ private const val PIC_FRAC = 0.16f
 private const val FOOT_REACH = 44f           // the hind feet are the farthest from the origin (front feet 30 ahead, hind 44 behind), model units
 private const val BUG_REACH = 80f            // on a widget the dragon runs until the bug is this close (model units)
 private const val BUG_LAND_S = 0.14f         // the small squash when it lands
+private const val BUG_FOLLOW_WAIT = 0.2f      // the dragon looks for this long, then takes off after a bug that jumped on
 private const val BUG_REJUMP = 0.6f          // chance that the bug jumps on again when the dragon lands next to it
-private const val BUG_SPAWN_MIN = 20f        // it appears at a random time, every 45 s on average (dragon awake and idle)
-private const val BUG_SPAWN_MAX = 70f
+private const val BUG_SPAWN_MIN = 8f         // it appears at a random time, every 19 s on average (counted while the dragon is awake and idle)
+private const val BUG_SPAWN_MAX = 30f
 private const val BUG_ALIVE = 0
 private const val BUG_DEAD = 1
 private const val BUG_FLIP = 2
@@ -107,6 +108,7 @@ class DragonView(context: Context) : View(context) {
     private class Icon(val r: RectF, val row: Int) {
         var burn = 0f; var heat = 0f; var ember = 0f; var sm = 0f; var lk = 0f; var em = 0f
         var big = false          // widget or large folder: bigger ground the dragon can crawl on
+        var pad = 0f             // widget whose rectangle covers whole grid cells: the visible card is this much narrower on each side
         val scorch = Array(4) { floatArrayOf(rnd(-.28f, .28f), rnd(-.28f, .28f), rnd(.28f, .5f), rnd(0f, TAU)) }
         val cx: Float get() = r.centerX()
         val cy: Float get() = r.centerY()
@@ -186,7 +188,7 @@ class DragonView(context: Context) : View(context) {
     private var bugJumpDur = 0.35f
     private var bugSide = 1f               // which side of the dragon the bug keeps to while the dragon stands on its icon
     private var bugAge = 0f
-    private var bugSpawnT = 20f            // seconds (awake and idle) until the next bug appears
+    private var bugSpawnT = 10f            // seconds (awake and idle) until the next bug appears
     private var bugNoticeT = 2f            // idle seconds until the dragon notices the bug: 1 to 3
     private var bugJumpT = 3f              // seconds until the bug jumps to another icon or widget by itself
     private var huntOn = false             // the dragon is after the bug (flying to it, or next to it)
@@ -194,6 +196,9 @@ class DragonView(context: Context) : View(context) {
     private var padX = 0f                  // the finder's rectangle of a widget or big folder is wider than the visible card: this much on each side (see updatePad)
     private var wbLo = 0f; private var wbHi = 0f                 // where the dragon may stand on a big surface, world x (see walkBounds)
     private var lastGroundLog = ""
+    private val logExec by lazy { java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "dragon-log").apply { isDaemon = true } } }
+    /** Writes a Log line on a background thread: Diag.log waits for the disk, and this is called from the frame loop. */
+    private fun dlog(msg: String) { val c = context.applicationContext; logExec.execute { Diag.log(c, msg) } }
     private var huntJumps = 0              // jumps the bug made since the dragon noticed it, and when it noticed (for the Log)
     private var huntT0 = 0L
     private var rgLo = 0f; private var rgHi = 0f                 // the bug's ground, world x (see bugRangeFor)
@@ -677,11 +682,14 @@ class DragonView(context: Context) : View(context) {
 
     private fun applyScale() {
         loadSettings()
+        if (icons.isEmpty()) return
         val m = iconWidth(icons.map { it.r.width() })
         if (lockSize <= 0f || width != lockW || height != lockH) {
             lockSize = m; lockStreak = 0; lockW = width; lockH = height            // first page, or the screen changed (rotation, resize)
-        } else if (abs(m - lockSize) > lockSize * 0.08f) {
-            if (++lockStreak >= 2) { lockSize = m; lockStreak = 0 }                 // two scans in a row differ: the icon size really is another (the first scan can come during an animation)
+        } else if (m > lockSize * 1.08f && m <= lockSize * 1.3f) {
+            lockSize = m; lockStreak = 0                                            // bigger icons: the earlier scan came during an animation (those are always smaller)
+        } else if (m > lockSize * 1.08f || m < lockSize * 0.92f) {
+            if (++lockStreak >= (if (m > lockSize * 1.3f) 3 else 2)) { lockSize = m; lockStreak = 0 }     // smaller (or far bigger, maybe a widget-heavy page): only after repeated scans
         } else lockStreak = 0
         size = lockSize
         saveIconSize()
@@ -725,8 +733,8 @@ class DragonView(context: Context) : View(context) {
         run {
             val ni0 = icons.firstOrNull { !it.big }; val wi0 = icons.firstOrNull { it.big }
             val gl = "Ground: icon " + (ni0?.let { "${it.r.width().toInt()}x${it.r.height().toInt()}" } ?: "-") + " px, widget " +
-                (wi0?.let { "${it.r.width().toInt()}x${it.r.height().toInt()}" } ?: "-") + " px, screen $width px, dragon size ${size.toInt()} px, 1 unit = " + "%.2f".format(ds) + " px, corner " + (ni0?.let { cornerR(it).toInt() } ?: 0) + " px, card inset ${padX.toInt()} px"
-            if (gl != lastGroundLog) { lastGroundLog = gl; Diag.log(context, gl) }
+                (wi0?.let { "${it.r.width().toInt()}x${it.r.height().toInt()}" } ?: "-") + " px, screen $width px, dragon size ${size.toInt()} px, 1 unit = " + "%.2f".format(ds) + " px, corner " + (ni0?.let { cornerR(it).toInt() } ?: 0) + " px, card inset ${(wi0?.pad ?: 0f).toInt()} px (this widget)"
+            if (gl != lastGroundLog) { lastGroundLog = gl; dlog(gl) }
         }
         if (bugOn) {
             if (!placed || settling || pageChanged) endBug()                // another page: the bug stays behind
@@ -764,12 +772,13 @@ class DragonView(context: Context) : View(context) {
     // ---------- footing (v4.21): feet and bug on the flat part, not over the rounded corners ----------
 
     /** Left and right end of the ground of [c]: a big surface is its whole width; a normal icon is its picture (never wider than the picture is on this screen). */
-    private fun groundL(c: Icon) = if (c.big) c.r.left + padX else c.cx - min(c.r.width(), width * PIC_FRAC) / 2f
-    private fun groundR(c: Icon) = if (c.big) c.r.right - padX else c.cx + min(c.r.width(), width * PIC_FRAC) / 2f
+    private fun groundL(c: Icon) = if (c.big) c.r.left + c.pad else c.cx - min(c.r.width(), width * PIC_FRAC) / 2f
+    private fun groundR(c: Icon) = if (c.big) c.r.right - c.pad else c.cx + min(c.r.width(), width * PIC_FRAC) / 2f
 
     /**
-     * A widget's rectangle covers whole grid cells (measured: 572 px for two cells, the visible card 484 px), and the card lines up with the icon pictures on both sides:
-     * padX = (distance between two neighbouring icons - icon picture) / 2, about 45 px. The distance is measured on this page, or guessed from the screen width.
+     * Some widgets (Calendar, Clock) report a rectangle that covers whole grid cells (572 px for two cells, the visible card 484 px); the card lines up with the icon pictures:
+     * padX = (distance between two neighbouring icons - icon picture) / 2, about 45 px. Others (Spotify: 1059 x 240 px) report the card itself. A rectangle that is a whole number
+     * of grid cells wide gets the inset, any other width gets none. The distance is measured on this page, or guessed from the screen width.
      */
     private fun updatePad() {
         val gaps = ArrayList<Float>()
@@ -780,13 +789,19 @@ class DragonView(context: Context) : View(context) {
             if (d > size * 0.8f && d < size * 2.2f) gaps.add(d)
         }
         val pitch = if (gaps.isNotEmpty()) gaps.sorted()[gaps.size / 2] else width * 0.2344f
-        padX = clampF((pitch - min(size, width * PIC_FRAC)) / 2f, 0f, width * 0.06f)
+        val nw = norm.map { it.r.width() }.sorted()
+        val picNow = if (nw.isEmpty()) size else nw[nw.size / 2]                   // the icons as they are drawn now, not the locked size
+        padX = clampF((pitch - min(picNow, width * PIC_FRAC)) / 2f, 0f, width * 0.06f)
+        for (c in icons) {
+            val n = c.r.width() / max(1f, pitch)
+            c.pad = if (c.big && n >= 1.5f && abs(n - Math.round(n)) < 0.07f) padX else 0f
+        }
     }
 
     /** Corner radius of [c]: the measured icon radius; a low wide widget is a pill (radius half its height). */
     private fun cornerR(c: Icon): Float {
         val r0 = max(size * 0.25f, width * CORNER_FRAC)
-        val cardH = c.r.height() - 2.1f * padX                                  // the rectangle also covers the label below the card
+        val cardH = c.r.height() - 2.1f * c.pad                                 // a whole-cell rectangle also covers the label below the card
         return if (c.big && cardH <= r0 * 4.2f) cardH * 0.5f else r0
     }
 
@@ -1021,7 +1036,7 @@ class DragonView(context: Context) : View(context) {
             if (side > 0f) { lo = max(lo, st.x + BUG_FRONT * ds); lo = min(lo, hi - BUG_MIN_ROOM * ds); lo = max(lo, st.x + 24f * ds) }
             else { hi = min(hi, st.x - BUG_FRONT * ds); hi = max(hi, lo + BUG_MIN_ROOM * ds); hi = min(hi, st.x - 24f * ds) }
         }
-        if (hi < lo) { val m = (lo + hi) / 2f; lo = m; hi = m }
+        if (hi < lo) { val mid = (lo + hi) / 2f; lo = mid; hi = mid }
         rgLo = lo; rgHi = hi
     }
 
@@ -1039,7 +1054,7 @@ class DragonView(context: Context) : View(context) {
         bugNoticeT = rnd(1f, 3f); bugJumpT = rnd(2.5f, 5f)
         huntOn = false
         fgSpotX = bugWx; fgSpotY = bugWy; fgAimX = bugWx; fgAimY = bugWy
-        Diag.log(context, "Bug: appeared on " + (if (ic(i).big) "a widget" else "an icon"))
+        dlog("Bug: appeared on " + (if (ic(i).big) "a widget" else "an icon"))
     }
 
     /** The bug is gone (eaten, or left behind on another page); the next one comes after a random while. */
@@ -1054,7 +1069,7 @@ class DragonView(context: Context) : View(context) {
         do { bugGoalX = lo + (hi - lo) * Random.nextFloat() } while (abs(bugGoalX - bugWx) < minStep && ++n < 12)
     }
 
-    private fun killBug() { bugSt = BUG_DEAD; bugT = 0f; bugMoving = false; bugSmoke = 0f; fgHit = true; Diag.log(context, "Bug: burnt (" + huntJumps + " jumps, " + "%.1f".format((SystemClock.uptimeMillis() - huntT0) / 1000f) + " s after it was noticed)") }
+    private fun killBug() { bugSt = BUG_DEAD; bugT = 0f; bugMoving = false; bugSmoke = 0f; fgHit = true; dlog("Bug: burnt (" + huntJumps + " jumps, " + "%.1f".format((SystemClock.uptimeMillis() - huntT0) / 1000f) + " s after it was noticed)") }
     private fun reviveBug() { bugSt = BUG_FLIP; bugT = 0f; bugMoving = false }
 
     /** The icon the bug is on, or is jumping to; and the x it is at or will land on. */
@@ -1194,10 +1209,10 @@ class DragonView(context: Context) : View(context) {
         if (!bugOn) { huntOn = false; return }
         huntOn = true
         val dest = bugDest()
-        if (dest != iconIdx) { bugNoticeT = 0.4f; return }                          // it got away meanwhile: a moment, then after it again
+        if (dest != iconIdx) { bugNoticeT = BUG_FOLLOW_WAIT; return }                          // it got away meanwhile: a moment, then after it again
         if (bugSt == BUG_ALIVE && Random.nextFloat() < BUG_REJUMP) {
             val j = pickJumpTarget(0f)
-            if (j >= 0 && beginBugJump(j)) { bugNoticeT = 0.45f; return }
+            if (j >= 0 && beginBugJump(j)) { bugNoticeT = BUG_FOLLOW_WAIT; return }
         }
         beginForage()
     }
@@ -1386,7 +1401,7 @@ class DragonView(context: Context) : View(context) {
         if (bugOn && (mode == Mode.IDLE || (mode == Mode.WALK && !sleepAfterWalk)) && (bugSt == BUG_ALIVE || bugSt == BUG_JUMP) && fade >= 0.99f && !hiddenByApp) {
             bugNoticeT -= dt                                            // counted only while the dragon is awake and idle
             if (bugNoticeT <= 0f) {
-                if (!huntOn) { fgWillRevive = Random.nextFloat() < REVIVE_CHANCE; fgRevived = false; huntJumps = 0; huntT0 = SystemClock.uptimeMillis(); Diag.log(context, "Bug: the dragon noticed it") }
+                if (!huntOn) { fgWillRevive = Random.nextFloat() < REVIVE_CHANCE; fgRevived = false; huntJumps = 0; huntT0 = SystemClock.uptimeMillis(); dlog("Bug: the dragon noticed it") }
                 startHunt()
             }
         }
@@ -1478,7 +1493,7 @@ class DragonView(context: Context) : View(context) {
                     FP_PICK -> {
                         lowT = if (fgT < PICK_BITE) lerp3(0.75f, 1f, smooth(0f, PICK_BITE, fgT)) else 1f - 0.85f * smooth(PICK_BITE + 0.1f, D_PICK, fgT)
                         mouthT = 0.6f * smooth(0.1f, 0.3f, fgT) * (1f - smooth(PICK_BITE, PICK_BITE + 0.1f, fgT))
-                        if (bugOn && fgT >= PICK_BITE + 0.05f) { endBug(); Diag.log(context, "Bug: eaten") }        // bitten: the bug is gone
+                        if (bugOn && fgT >= PICK_BITE + 0.05f) { endBug(); dlog("Bug: eaten") }        // bitten: the bug is gone
                         if (fgT >= D_PICK) { fgPhase = FP_EAT; fgT = 0f; fgCrumb = 0 }
                     }
                     else -> {

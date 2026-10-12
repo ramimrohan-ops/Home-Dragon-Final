@@ -522,3 +522,18 @@ Found in the Log of 4.21 (screen 1220 px): `Ground: icon 208x208 px, widget 572x
 - **Log line "Ground:"** now also shows the dragon size and the card inset.
 - Seen in the Log and left alone: the page-2 scan at 19:32:26 came while the launcher was still animating (icons 190 px, 91% of 208); the next scan 4 s later fixed it. A second scan is not added (your rule).
 - Not proven on the phone: the 45 px inset on other launchers' widgets, the relock threshold.
+
+## v4.23 - bigger dragon at once, per-widget inset, more bugs, review
+Review before the build: no crash risk found (the `!!` uses are assigned just before use, the `ArrayDeque` is Kotlin's, the casts are standard); one real crash guard added in `applyScale` (an empty icon list now returns early). No dead code, unused file or unused resource found (checked with the import, unused-name and resource scripts; only framework overrides and manifest-referenced files show up).
+
+| Change | Why | Now |
+|---|---|---|
+| Dragon size follows bigger icons at once | The first scan after an install or restart comes during the launcher animation (icons 86 - 91% size), so the lock was too small | If the icons are 8 - 30% bigger than the lock, the lock changes at once (animation scans are always smaller). Smaller, or more than 30% bigger: only after 2 (3) scans in a row. |
+| Card inset per widget | Calendar/Clock report whole grid cells (572 px = 2 x 286) while the card is 484 px; Spotify reports its card (1059 x 240 px) | Only a widget whose width is a whole number (1.5 or more, within 0.07) of grid cells gets the inset. Spotify-like widgets get none. |
+| Inset measured from the real icons | It used the locked dragon size | It uses the median width of the icons as drawn now. |
+| Follow wait | 0.45 s felt slow | 0.2 s (`BUG_FOLLOW_WAIT`) before the dragon takes off after a bug that jumped on. |
+| Bug appears more often | It looked rare | Every 8 - 30 s of awake idle time (about 19 s on average, before 45 s). First one after 10 s. |
+| Log writes | `Diag.log` waits for the disk and was called from the frame loop | Written on a background thread (`dlog`). |
+
+- **Log line "Ground:"** now shows the inset of the first widget on the page ("card inset N px (this widget)").
+- Not proven on the phone: the spawn rate, the 0.2 s wait, the inset on other widgets.
