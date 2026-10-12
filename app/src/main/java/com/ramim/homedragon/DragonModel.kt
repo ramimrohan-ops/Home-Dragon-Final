@@ -48,6 +48,8 @@ class DragonModel {
         var time = 0f
         var wingPh = 0f
         var bob = 0f
+        /** 0 .. 1: the neck bows down and forward so the head can reach the ground (the found-something routine); ignored while flying, walking or asleep. */
+        var lower = 0f
         var crouch = 0f
         var walk = 0f          // 0 seated, 1 crawling on a large icon
         var gait = 0f          // walk cycle in whole cycles
@@ -191,13 +193,18 @@ class DragonModel {
         scalePaint.alpha = 140
     }
 
+    /** How far the head base moves (model units) when the neck is fully bowed ([State.lower] = 1). */
+    private val lowerDx = 40f
+    private val lowerDy = 80f
+
     fun restHead(sp: Float, walk: Float) = lerp(lerp(0.28f, 0.12f, walk * (1f - sp)), 0.05f, sp)
 
     /** Head base in model coordinates without bob (for aiming). out[0]=x, out[1]=y. */
-    fun headLocal(sp: Float, walk: Float, out: FloatArray) {
+    fun headLocal(sp: Float, walk: Float, out: FloatArray, lower: Float = 0f) {
         val w = walk * (1f - sp)
-        out[0] = lerp(lerp(gr[headI][0], wk[headI][0], w), fl[headI][0], sp)
-        out[1] = lerp(lerp(gr[headI][1], wk[headI][1], w), fl[headI][1], sp)
+        val lw = lower * (1f - sp) * (1f - w)
+        out[0] = lerp(lerp(gr[headI][0], wk[headI][0], w), fl[headI][0], sp) + lw * lowerDx
+        out[1] = lerp(lerp(gr[headI][1], wk[headI][1], w), fl[headI][1], sp) + lw * lowerDy
     }
 
     /** Foot path of one leg: stance slides back on the ground, swing lifts and moves forward. */
@@ -248,6 +255,9 @@ class DragonModel {
         pR[9] *= 1f + 0.02f * sin(t * 1.9f) * (1f - sp)
         val sk = s.scratch * (1f - sp) * (1f - w) * (1f - s.rest)
         if (sk > 0.001f) for (i in 10 until n) { pX[i] = lerp(pX[i], scrX[i - 10], sk); pY[i] = lerp(pY[i], scrY[i - 10], sk) }
+        // the neck bows down and forward, a little more for each point towards the head (the shoulders stay put)
+        val lw = s.lower * (1f - sp) * (1f - w) * (1f - s.rest)
+        if (lw > 0.001f) for (i in 9 until n) { val f = (i - 8) / 5f; pX[i] += lw * f * lowerDx; pY[i] += lw * f * lowerDy }
         hx = pX[headI]; hy = pY[headI]
         hang = s.head + sin(t * 0.7f) * 0.03f * (1f - sp)
         if (rs > 0f) {

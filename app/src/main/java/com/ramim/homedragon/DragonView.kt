@@ -37,6 +37,17 @@ private const val SCAN_WAIT_MAX_MS = 2500L
 /** The dragon appears this long after the scan has finished. */
 private const val APPEAR_AFTER_SCAN_MS = 400L
 
+/** "Found something" routine (v4.16), seconds: notice, small flame, pick up, chew, lick. Total 4.4 s. */
+private const val FG_NOTICE_END = 1.0f
+private const val FG_FIRE_ON = 1.1f
+private const val FG_FIRE_OFF = 1.5f
+private const val FG_PICK_START = 1.6f
+private const val FG_BITE = 2.0f
+private const val FG_CHEW_START = 2.4f
+private const val FG_LICK_START = 4.0f
+private const val FG_END = 4.4f
+private const val FG_SPOT_X = 100f      // the spot on the ground in front of the dragon, in model units from its origin
+
 /** Body rise / sink with each wing flap, in model units (about 13% of the wing length), and the nose-up tilt on the upstroke in radians (about 4.5 degrees). */
 private const val FLAP_BOB = 9f
 private const val FLAP_TILT = 0.08f
@@ -57,7 +68,7 @@ private fun deg(r: Float) = r * 57.29578f
  */
 class DragonView(context: Context) : View(context) {
 
-    private enum class Mode { IDLE, CROUCH, FLY, FIRE, WALK, SLEEP, SCRATCH }
+    private enum class Mode { IDLE, CROUCH, FLY, FIRE, WALK, SLEEP, SCRATCH, FORAGE }
 
     private class Icon(val r: RectF, val row: Int) {
         var burn = 0f; var heat = 0f; var ember = 0f; var sm = 0f; var lk = 0f; var em = 0f
@@ -115,6 +126,15 @@ class DragonView(context: Context) : View(context) {
     private var sleepDur = 4f           // seconds asleep (never more than 6)
     private var sleepAfterWalk = false  // a few steps first, then lie down
     private var scratchDur = 2.5f
+    private var fgDir = 1f                 // found-something routine: facing, spot position, flame and crumb bookkeeping
+    private var fgSpotX = 0f
+    private var fgSpotY = 0f
+    private var fgAcc = 0f
+    private var fgCrumb = 0
+    private val hl2 = FloatArray(2)
+    private val crX = FloatArray(8); private val crY = FloatArray(8); private val crVx = FloatArray(8); private val crVy = FloatArray(8); private val crAge = FloatArray(8)
+    private var ncr = 0
+    private val crumbPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = Color.rgb(236, 226, 205) }
     private val spot = FloatArray(2)    // sleeping place: [facing, x]
     private var vx = 0f
     private var vy = 0f
@@ -627,7 +647,7 @@ class DragonView(context: Context) : View(context) {
             nf = 0; ns = 0; nk = 0
             land(Random.nextInt(icons.size), true)
             if (!settling) { fade = 0f; fadeGoal = 1f }         // launcher sent no scroll events: still hide the jump
-        } else if (mode == Mode.IDLE || mode == Mode.CROUCH || mode == Mode.SLEEP || mode == Mode.SCRATCH) {
+        } else if (mode == Mode.IDLE || mode == Mode.CROUCH || mode == Mode.SLEEP || mode == Mode.SCRATCH || mode == Mode.FORAGE) {
             val ni = nearestIcon(st.x, st.y)
             val nc = ic(ni)
             land(ni, true, if (nc.big) clampF(st.x, nc.r.left + 16f, max(nc.r.left + 17f, nc.r.right - 16f)) else null)
@@ -840,8 +860,17 @@ class DragonView(context: Context) : View(context) {
         mode = Mode.SCRATCH; t = 0f; scratchDur = rnd(2.4f, 3.8f); st.scratchPh = 0f
     }
 
+    /** Found something on the ground: stare, a small flame at it, pick it up, chew. Ground only; nothing is scorched. */
+    private fun startForage() {
+        mode = Mode.FORAGE; t = 0f; fgAcc = 0f; fgCrumb = 0; ncr = 0
+        fgDir = if (faceT >= 0f) 1f else -1f
+        faceT = fgDir
+        sleepAfterWalk = false
+    }
+
     private fun doAction(kind: String) {
         when (kind) {
+            "forage" -> startForage()
             "sleep" -> startSleep()
             "scratch" -> startScratch()
             "walk" -> { if (!startWalk()) timer = rnd(1f, 2f) }
@@ -864,12 +893,13 @@ class DragonView(context: Context) : View(context) {
         kinds.add("jump"); w.add(0.13f)
         kinds.add("fly"); w.add(0.13f)
         kinds.add("fire"); w.add(0.22f)
+        kinds.add("forage"); w.add(0.14f)
         var r = Random.nextFloat() * w.sum()
         for (i in kinds.indices) { r -= w[i]; if (r <= 0f || i == kinds.size - 1) { doAction(kinds[i]); return } }
     }
 
     // ---------- effects ----------
-    private fun emitFlame(mx: Float, my: Float, tx: Float, ty: Float) {
+    private fun emitFlame(mx: Float, my: Float, tx: Float, ty: Float, sizeMul: Float = 1f, minSpeed: Float = 260f) {
         if (nf >= capF) return
         val kind = if (Random.nextFloat() < 0.35f) 0 else 1
         val life = if (kind == 0) rnd(0.3f, 0.46f) else rnd(0.45f, 0.8f)
@@ -878,14 +908,14 @@ class DragonView(context: Context) : View(context) {
         val arrive = life * rnd(0.74f, 0.86f)
         val lift = 0.5f * (90f + (if (kind == 1) 100f else 20f)) * sc * arrive * arrive
         val dx = tx - mx; val dy = ty + lift - my; val d = max(1f, hypot(dx, dy)); val ux = dx / d; val uy = dy / d
-        val sp = clampF(d * 0.916f / (1f - 0.4f.pow(arrive)), 260f * sc, 1500f * sc)
+        val sp = clampF(d * 0.916f / (1f - 0.4f.pow(arrive)), minSpeed * sc, 1500f * sc)
         val a = (Random.nextFloat() - 0.5f) * (if (kind == 0) 0.05f else 0.16f)
         val cs = cos(a); val sn = sin(a)
         fX[nf] = mx; fY[nf] = my
         fVx[nf] = (ux * cs - uy * sn) * sp; fVy[nf] = (ux * sn + uy * cs) * sp
         fPx[nf] = -uy; fPy[nf] = ux
         fAge[nf] = 0f; fLife[nf] = life
-        fSize[nf] = (if (kind == 0) rnd(8f, 12f) else rnd(13f, 22f)) * ds * 1.35f
+        fSize[nf] = (if (kind == 0) rnd(8f, 12f) else rnd(13f, 22f)) * ds * 1.35f * sizeMul
         fSeed[nf] = rnd(0f, TAU); fKind[nf] = kind
         nf++
     }
@@ -991,7 +1021,7 @@ class DragonView(context: Context) : View(context) {
         var firing = false
         when (mode) {
             Mode.IDLE -> { timer -= dt; if (timer <= 0f) chooseNext() }
-            Mode.WALK -> {
+            Mode.WALK -> if (!sleepAfterWalk && st.walk > 0.9f && Random.nextFloat() < dt * 0.1f) startForage() else {
                 val spd = 26f * sc * st.walk * st.walk
                 val dx = walkTo - st.x; val stp = min(abs(dx), spd * dt)
                 st.x += (if (dx > 0f) stp else -stp); st.gait += stp / ds / 46.7f
@@ -1025,6 +1055,53 @@ class DragonView(context: Context) : View(context) {
                 t += dt
                 if (t >= dur) { val cb = then; then = null; cb?.invoke() }
             }
+            Mode.FORAGE -> {
+                t += dt
+                fgSpotX = st.x + fgDir * FG_SPOT_X * ds; fgSpotY = st.y
+                // the neck bows towards the spot, a bit while staring, all the way for the pick-up, then back up
+                st.lower = when {
+                    t < FG_NOTICE_END -> 0.55f * smooth(0f, 0.35f, t)
+                    t < FG_PICK_START -> 0.55f
+                    t < FG_BITE -> 0.55f + 0.45f * smooth(FG_PICK_START, FG_BITE, t)
+                    t < FG_CHEW_START -> 1f - 0.85f * smooth(FG_BITE + 0.1f, FG_CHEW_START, t)
+                    else -> 0.15f * (1f - smooth(FG_CHEW_START, FG_CHEW_START + 1f, t))
+                }
+                model.headLocal(st.sp, st.walk, hl2, st.lower)
+                val bx = st.x + fgDir * hl2[0] * ds; val by = st.y + (hl2[1] + st.bob) * ds
+                val toSpot = clampF(atan2(fgSpotY - by, max(8f, abs(fgSpotX - bx))), -0.6f, 1.2f)
+                headGoal = when {
+                    t < FG_NOTICE_END -> toSpot + 0.03f * sin(t * 10f)          // a small sniffing nod
+                    t < FG_BITE + 0.1f -> toSpot
+                    t < FG_CHEW_START -> lerp3(toSpot, 0.2f, smooth(FG_BITE + 0.1f, FG_CHEW_START, t))
+                    t < FG_LICK_START -> 0.2f
+                    else -> 0.2f - 0.25f * sin(PI.toFloat() * (t - FG_LICK_START) / (FG_END - FG_LICK_START))
+                }
+                // mouth: closed while staring, open for the flame, open for the pick-up and closing on it, chewing, one slow lick
+                st.mouth = when {
+                    t < FG_FIRE_ON -> 0f
+                    t < FG_PICK_START -> smooth(FG_FIRE_ON, FG_FIRE_ON + 0.12f, t) * 0.7f * (1f - smooth(FG_FIRE_OFF, FG_PICK_START, t))
+                    t < FG_CHEW_START -> 0.6f * smooth(FG_PICK_START + 0.1f, FG_PICK_START + 0.3f, t) * (1f - smooth(FG_BITE, FG_BITE + 0.1f, t))
+                    t < FG_LICK_START -> { val u = t - FG_CHEW_START; (0.05f + 0.18f * (0.5f - 0.5f * cos(u * TAU * 3.3f))) * (1f - smooth(FG_LICK_START - 0.15f, FG_LICK_START, t)) }
+                    t < FG_END -> 0.4f * sin(PI.toFloat() * (t - FG_LICK_START) / (FG_END - FG_LICK_START))
+                    else -> 0f
+                }
+                st.mouthGlow = if (t >= FG_FIRE_ON && t < FG_PICK_START) -1f else 0f    // flame glow in the mouth only while the small flame burns
+                if (t >= FG_FIRE_ON && t < FG_FIRE_OFF) {
+                    model.mouthPos(st, mp)
+                    fgAcc += dt * 70f * (0.45f + 0.55f * pq)
+                    while (fgAcc >= 1f) { fgAcc -= 1f; emitFlame(mp[0], mp[1], fgSpotX, fgSpotY, 0.5f, 60f) }     // small: no charge-up, no scorching
+                }
+                // crumbs fall from the mouth while it chews
+                while (fgCrumb < 5 && t >= FG_CHEW_START + 0.15f + 0.3f * fgCrumb) {
+                    fgCrumb++
+                    if (ncr < crX.size) {
+                        model.mouthPos(st, mp)
+                        crX[ncr] = mp[0]; crY[ncr] = mp[1]; crVx[ncr] = fgDir * rnd(10f, 45f) * sc; crVy[ncr] = -rnd(20f, 70f) * sc; crAge[ncr] = 0f
+                        ncr++
+                    }
+                }
+                if (t >= FG_END) { mode = Mode.IDLE; timer = rnd(1.4f, 3f) }
+            }
             Mode.FLY -> {
                 t += dt
                 val e = min(1f, t / dur); val s = e * e * (3f - 2f * e)
@@ -1055,11 +1132,12 @@ class DragonView(context: Context) : View(context) {
                 if (ft >= fireDur) { if (chargeT <= 0.05f) st.mouth = 0f; fireFt = -1f; val cb = then; then = null; cb?.invoke() }
             }
         }
-        if (!firing) { st.mouth = max(0f, st.mouth - dt * (if (chargeT > 0.05f) 1.3f else 6f)); st.mouthGlow = -1f }   // closes slowly after a charged breath
+        if (!firing && mode != Mode.FORAGE) { st.mouth = max(0f, st.mouth - dt * (if (chargeT > 0.05f) 1.3f else 6f)); st.mouthGlow = -1f }   // closes slowly after a charged breath
         // electric arcs on the spine: full strength during the whole breath, then fading to zero in about a second
         if (firing && fireFt >= 0f && chargeT > 0.05f) chSpark = 1f else if (chSpark > 0f) chSpark = max(0f, chSpark - rdt)
         if (mode != Mode.SCRATCH) st.scratch = max(0f, st.scratch - dt * 4f)
-        val hg = if (firing) headGoal
+        if (mode != Mode.FORAGE) st.lower = max(0f, st.lower - dt * 3f)
+        val hg = if (firing || mode == Mode.FORAGE) headGoal
         else if (st.scratch > 0.02f) lerp3(model.restHead(st.sp, st.walk) + look * (1f - st.sp), 0.45f + 0.05f * sin(st.scratchPh * 0.5f), st.scratch)
         else model.restHead(st.sp, st.walk) + look * (1f - st.sp)
         st.head += (hg - st.head) * min(1f, dt * 12f)
@@ -1078,11 +1156,25 @@ class DragonView(context: Context) : View(context) {
         st.flapTilt = -FLAP_TILT * flapAmp * 0.5f * (1f - cos(st.wingPh)) * st.sp
         st.time = time; st.ds = ds
         // "completely sitting": the landing / crouch / wing-fold animation has finished too
-        val settled = st.sp < 0.02f && st.walk < 0.02f && st.crouch < 0.02f && st.mouth < 0.02f &&
+        val settled = st.sp < 0.02f && st.walk < 0.02f && st.crouch < 0.02f && st.mouth < 0.02f && st.lower < 0.02f &&
             abs(st.pitch) < 0.01f && abs(st.face - faceT) < 0.02f
         val asleep = mode == Mode.SLEEP && sleepPhase == 1 && st.rest >= 0.999f
         idleNow = settled && (mode == Mode.IDLE || mode == Mode.SCRATCH || asleep) && nf == 0 && ns == 0 && nk == 0 && fade >= 0.99f && fadeGoal >= 0.99f &&
             !hiddenByApp && icons.none { it.heat > 0.02f || it.ember > 0.02f }
+
+        // crumbs
+        var q = ncr - 1
+        while (q >= 0) {
+            crAge[q] += rdt
+            if (crAge[q] > 0.9f) {
+                ncr--
+                crX[q] = crX[ncr]; crY[q] = crY[ncr]; crVx[q] = crVx[ncr]; crVy[q] = crVy[ncr]; crAge[q] = crAge[ncr]
+            } else {
+                crVy[q] += 520f * sc * rdt
+                crX[q] += crVx[q] * rdt; crY[q] += crVy[q] * rdt
+            }
+            q--
+        }
 
         // flame particles
         val tgt = if (mode == Mode.FIRE) ic(target) else null
@@ -1178,8 +1270,23 @@ class DragonView(context: Context) : View(context) {
         for (ic in icons) if (ic.burn > 0.01f || ic.heat > 0.02f) drawBurn(c, ic)
         drawSmoke(c)
         model.draw(c, st)
+        drawForage(c)
         drawFlame(c)
         if (layer) c.restoreToCount(saved)
+    }
+
+    /** The pretend find: a glint and a pale speck on the ground until the bite, then crumbs falling from the chewing mouth. */
+    private fun drawForage(c: Canvas) {
+        if (mode == Mode.FORAGE && t < FG_BITE + 0.05f) {
+            plusPaint.alpha = ((0.55f + 0.35f * sin(time * 14f)) * 255f).toInt()
+            sprite(c, sCore, fgSpotX, fgSpotY - 2f * sc, 7f * sc, plusPaint)
+            crumbPaint.alpha = 255
+            c.drawCircle(fgSpotX, fgSpotY - 1.5f * sc, 2.2f * sc, crumbPaint)
+        }
+        for (k in 0 until ncr) {
+            crumbPaint.alpha = (255f * (1f - crAge[k] / 0.9f)).toInt().coerceIn(0, 255)
+            c.drawCircle(crX[k], crY[k], 2f * sc, crumbPaint)
+        }
     }
 
     private fun sprite(c: Canvas, b: Bitmap, cx: Float, cy: Float, half: Float, paint: Paint) {

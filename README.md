@@ -416,3 +416,18 @@ Android blocks accessibility services of apps installed outside an app store. Th
 - While breathing fire both motions are 60% of their size (smoothly), so the aim stays steady.
 - Not changed: scan wait 0.5 s, bar read 0.4 s, no polling, Phone Status link. The sizes (9 units, 0.08 rad) are estimates: tune after seeing them on the phone.
 
+## v4.16 - "found something" routine (ground only)
+A new random ground behaviour, picked like scratch or sleep (weight 0.14), and also a small chance (about once per 10 s of walking) while the dragon crawls on a big icon. About 4.4 s:
+
+| Step | Time | What happens |
+|---|---|---|
+| Notice | 0 - 1.0 s | The neck bows part way and the head looks at a spot on the ground in front (a small glint and a pale speck), with a small sniffing nod |
+| Small flame | 1.1 - 1.5 s | The mouth opens fast and a small flame goes to the spot. **No charge-up, no arcs, no scorching** (the icon is not burnt, no splash) |
+| Pick up | 1.6 - 2.4 s | The neck bows all the way, the mouth opens, closes on the spot (the glint goes out) and the head comes back up |
+| Eat | 2.4 - 4.4 s | About 5 chews, crumbs fall from the mouth, then one slow lick (a slow mouth open and close) and back to idle |
+
+- New neck bow (`State.lower`): the spine points from the shoulder up move down and forward, so the head can reach the ground. It is zero while flying, walking or asleep, and it fades out if the routine is interrupted (a swipe or page change).
+- The spot is 100 model units in front of the dragon, on the ground line of the icon it stands on. The head angle is worked out from the head position each frame.
+- The small flame uses the normal flame particles with half the size and a lower minimum speed (they are only about 40 px from the mouth to the spot). The real fire breath is unchanged.
+- Never from flying, sleeping, scratching or breathing fire. Not proven on the phone: the bow depth (40 / 80 units), the spot distance, the chew count and the crumb size are estimates to tune after seeing it.
+
