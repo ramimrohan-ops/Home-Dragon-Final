@@ -11,6 +11,12 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- Usage access (the user switches it on by hand): tells the dragon which app is in front. Optional. -->
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
+    <!-- Horse Dragon: BLE / Bluetooth / Wi-Fi Direct handshake and discovery -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 
     <!-- Lets the app look up which app is the current home launcher (Android 11+ package visibility). -->
     <queries>
@@ -37,6 +43,10 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Horse Dragon battle screens -->
+        <activity android:name=".battle.BattleActivity" />
+        <activity android:name=".battle.BattleResult" />
 
         <service
             android:name=".DragonService"
