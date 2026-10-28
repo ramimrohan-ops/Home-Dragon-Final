@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Home Dragon</string>
+    <string name="a11y_label">Home Dragon icon finder</string>
+    <string name="a11y_desc">Finds where your home-screen icons are, and notices when the home screen is in front, so the dragon can sit on the icons and breathe fire at them. It checks icon positions and whether an icon has a label, but it does not read, store or send any text, messages or passwords, and it never taps or controls anything.</string>
+</resources>
