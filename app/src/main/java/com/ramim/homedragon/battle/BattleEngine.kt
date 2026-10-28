@@ -1,6 +1,7 @@
 package com.ramim.homedragon.battle
 
 import com.ramim.homedragon.dragon.DragonStats
+import kotlin.math.maxOf
 
 /** Result of a completed battle. */
 enum class BattleOutcome { PLAYER_WIN, OPPONENT_WIN, DRAW, IN_PROGRESS }

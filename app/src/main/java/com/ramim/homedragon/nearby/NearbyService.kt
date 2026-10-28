@@ -55,7 +55,7 @@ class NearbyService : Service() {
             }
             ACTION_SEND -> {
                 intent.getStringExtra(EXTRA_MESSAGE)?.let { text ->
-                    sendListener?.invoke(NearbyProtocol.decode(text.toByteArray()))
+                    NearbyProtocol.decode(text.toByteArray())?.let { sendListener?.invoke(it) }
                 }
             }
         }

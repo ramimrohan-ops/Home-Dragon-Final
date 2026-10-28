@@ -29,16 +29,16 @@ class BattleView @JvmOverloads constructor(
         paint.color = Color.parseColor("#121212")
         canvas.drawRect(0f, 0f, w, h, paint)
 
-        state ?: return
+        val currentState = state ?: return
 
         // player HP bar (left, teal)
         paint.color = Color.parseColor("#4AA896")
-        val playerBarW = (w * 0.42f) * state.player.hpPercent()
+        val playerBarW = (w * 0.42f) * currentState.player.hpPercent()
         canvas.drawRect(24f, 52f, 24f + playerBarW, 76f, paint)
 
         // opponent HP bar (right, orange)
         paint.color = Color.parseColor("#E0713A")
-        val oppBarW = (w * 0.42f) * state.opponent.hpPercent()
+        val oppBarW = (w * 0.42f) * currentState.opponent.hpPercent()
         canvas.drawRect(w - 24f - oppBarW, 52f, w - 24f, 76f, paint)
 
         // bar outlines
@@ -52,14 +52,14 @@ class BattleView @JvmOverloads constructor(
         // labels
         paint.color = Color.WHITE
         paint.textSize = 22f
-        canvas.drawText("Player  ${state.player.hp}/${state.player.maxHp}", 24f, 44f, paint)
-        canvas.drawText("Opponent  ${state.opponent.hp}/${state.opponent.maxHp}", w - 24f - 260f, 44f, paint)
+        canvas.drawText("Player  ${currentState.player.hp}/${currentState.player.maxHp}", 24f, 44f, paint)
+        canvas.drawText("Opponent  ${currentState.opponent.hp}/${currentState.opponent.maxHp}", w - 24f - 260f, 44f, paint)
 
         // outcome banner
-        if (state.outcome != BattleOutcome.IN_PROGRESS) {
+        if (currentState.outcome != BattleOutcome.IN_PROGRESS) {
             paint.color = Color.parseColor("#FFD54F")
             paint.textSize = 34f
-            val msg = when (state.outcome) {
+            val msg = when (currentState.outcome) {
                 BattleOutcome.PLAYER_WIN -> "PLAYER WINS!"
                 BattleOutcome.OPPONENT_WIN -> "OPPONENT WINS!"
                 BattleOutcome.DRAW -> "DRAW"
