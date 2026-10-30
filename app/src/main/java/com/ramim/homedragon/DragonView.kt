@@ -1523,7 +1523,16 @@ class DragonView(context: Context) : View(context) {
                     FP_PICK -> {
                         lowT = if (fgT < PICK_BITE) lerp3(0.75f, 1f, smooth(0f, PICK_BITE, fgT)) else 1f - 0.85f * smooth(PICK_BITE + 0.1f, D_PICK, fgT)
                         mouthT = 0.6f * smooth(0.1f, 0.3f, fgT) * (1f - smooth(PICK_BITE, PICK_BITE + 0.1f, fgT))
-                        if (bugOn && fgT >= PICK_BITE + 0.05f) { endBug(); dlog("Bug: eaten") }        // bitten: the bug is gone
+                        if (bugOn && fgT >= PICK_BITE + 0.05f) {
+                            // Sometimes bring the bug to the chick instead of eating it herself
+                            if (nest.wantsFoodForChick()) {
+                                nest.feedChick()
+                                dlog("Bug: brought to chick")
+                            } else {
+                                dlog("Bug: eaten")
+                            }
+                            endBug()
+                        }        // bitten: the bug is gone (or fed to chick)
                         if (fgT >= D_PICK) { fgPhase = FP_EAT; fgT = 0f; fgCrumb = 0 }
                     }
                     else -> {

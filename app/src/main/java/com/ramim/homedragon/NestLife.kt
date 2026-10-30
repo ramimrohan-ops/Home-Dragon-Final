@@ -13,8 +13,9 @@ import kotlin.random.Random
 
 /**
  * The dragon's own family. She decides. The nest covers about 60% of her length.
- * The child plays and flies on its own path, then leaves and is forgotten.
+ * Natural bird-like cycle: build nest, lay eggs, fly away, return to brood, hatch, feed chick.
  * Nest is anchored to a specific icon. If that icon moves, the nest is lost and she builds again.
+ * Chick is independent and grows gradually by eating.
  */
 class NestLife {
     enum class Phase { NONE, BUILD, LAY, BROOD, CHICK, SKY, AWAY, VISIT }
@@ -31,6 +32,8 @@ class NestLife {
     val chick = DragonModel.State()
     var showChick = false
         private set
+    var chickGrowth = 0.42f   // starts small, grows toward ~0.75 by eating
+        private set
 
     // Anchored position (set when nest is built)
     var anchorX = 0f
@@ -41,6 +44,10 @@ class NestLife {
         private set
     var anchorPage = -1
         private set
+
+    // Natural build progress (twigs appear one by one)
+    private var twigsPlaced = 0
+    private val maxTwigs = 28
 
     private val twig = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND }
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -56,6 +63,16 @@ class NestLife {
 
     fun usedSkyFlight() { skyUsed = true }
 
+    /** Mother should bring food to chick sometimes after hatch. */
+    fun wantsFoodForChick(): Boolean = showChick && phase == Phase.CHICK && Random.nextFloat() < 0.35f
+
+    /** Call when mother successfully brings a bug to the chick. */
+    fun feedChick() {
+        if (showChick && chickGrowth < 0.78f) {
+            chickGrowth = min(0.78f, chickGrowth + 0.04f)
+        }
+    }
+
     fun tick(dt: Float, canBegin: Boolean) {
         when (phase) {
             Phase.NONE -> {
@@ -65,24 +82,28 @@ class NestLife {
             }
             Phase.BUILD -> {
                 t += dt
-                built = min(1f, t / 8f)
+                // Twigs appear gradually like a bird placing them
+                val targetTwigs = (t / 11f * maxTwigs).toInt().coerceIn(0, maxTwigs)
+                if (targetTwigs > twigsPlaced) twigsPlaced = targetTwigs
+                built = min(1f, twigsPlaced / maxTwigs.toFloat())
                 if (t >= 11f) { phase = Phase.LAY; t = 0f }
             }
             Phase.LAY -> {
                 t += dt
                 built = 1f
+                // Egg appears after a short settling period
                 lay = if (t < 3.5f) 0f else min(1f, (t - 3.5f) / 5f)
                 if (t >= 12f) { phase = Phase.BROOD; t = 0f; lay = 1f }
             }
             Phase.BROOD -> {
                 t += dt
-                if (t >= 8f) { phase = Phase.CHICK; t = 0f; shell = 1f; showChick = true }
+                if (t >= 9f) { phase = Phase.CHICK; t = 0f; shell = 1f; showChick = true; chickGrowth = 0.42f }
             }
             Phase.CHICK -> {
                 t += dt
-                shell = max(0f, 1f - t / 12f)
+                shell = max(0f, 1f - t / 14f)
                 showChick = true
-                if (t >= 14f) { phase = Phase.SKY; t = 0f; skyUsed = false; shell = 0f }
+                if (t >= 16f) { phase = Phase.SKY; t = 0f; skyUsed = false; shell = 0f }
             }
             Phase.SKY -> {
                 t += dt
@@ -102,7 +123,6 @@ class NestLife {
         }
     }
 
-    /** Call when the dragon starts building on a specific icon. */
     fun setAnchor(x: Float, y: Float, page: Int) {
         anchorX = x
         anchorY = y
@@ -110,7 +130,6 @@ class NestLife {
         hasAnchor = true
     }
 
-    /** Call when the icon the nest was on has moved or disappeared. Nest is lost. */
     fun loseNest() {
         if (phase == Phase.NONE) return
         forget()
@@ -120,22 +139,21 @@ class NestLife {
 
     fun placeChick(mx: Float, my: Float, ds: Float, time: Float, width: Float, height: Float) {
         if (!showChick) return
-        chick.ds = ds * 0.46f
+        chick.ds = ds * chickGrowth
         chick.eye = 1f
         chick.time = time
         chick.mouth = 0f
         chick.rest = 0f
         chick.lower = 0f
         chick.crouch = 0f
-        // Chick is independent: uses nest anchor if available, otherwise mother's position
         val baseX = if (hasAnchor) anchorX else mx
         val baseY = if (hasAnchor) anchorY else my
         when (phase) {
             Phase.CHICK -> {
                 val play = sin(time * 0.55f)
                 val hop = max(0f, sin(time * 2.1f))
-                chick.x = baseX + ds * (28f + play * 42f)
-                chick.y = baseY - hop * hop * ds * 14f
+                chick.x = baseX + ds * (22f + play * 36f)
+                chick.y = baseY - hop * hop * ds * 12f
                 chick.face = if (play > 0f) 1f else -1f
                 chick.sp = 0f
                 chick.wingPh = time * 1.3f
@@ -165,8 +183,8 @@ class NestLife {
                     chick.face = -1f
                 } else if (u < 0.72f) {
                     val play = sin(time * 1.05f)
-                    chick.x = baseX + ds * (40f + play * 32f)
-                    chick.y = baseY - max(0f, sin(time * 2.2f)) * ds * 12f
+                    chick.x = baseX + ds * (34f + play * 28f)
+                    chick.y = baseY - max(0f, sin(time * 2.2f)) * ds * 10f
                     chick.sp = 0f
                     chick.face = if (play > 0f) 1f else -1f
                 } else {
@@ -210,6 +228,8 @@ class NestLife {
         showChick = false
         skyUsed = false
         hasAnchor = false
+        twigsPlaced = 0
+        chickGrowth = 0.42f
     }
 
     private fun afterLeave() {
@@ -244,62 +264,70 @@ class NestLife {
         eggs = 0
         hasAnchor = false
         anchorPage = -1
+        twigsPlaced = 0
+        chickGrowth = 0.42f
     }
 
     private fun drawNest(c: Canvas, x: Float, y: Float, ds: Float, front: Boolean) {
-        val rx = 70f * ds * built
-        val ry = 30f * ds * built
+        val rx = 72f * ds * built
+        val ry = 32f * ds * built
         val cy = y - 18f * ds
         if (!front) {
             // Soft ground shadow
-            shadow.color = Color.argb(70, 0, 0, 0)
-            box.set(x - rx * 1.05f, cy + ry * 0.15f, x + rx * 1.05f, cy + ry * 0.9f)
+            shadow.color = Color.argb(65, 0, 0, 0)
+            box.set(x - rx * 1.08f, cy + ry * 0.12f, x + rx * 1.08f, cy + ry * 0.92f)
             c.drawOval(box, shadow)
-            // Inner soft fill (straw-like)
-            fill.color = Color.parseColor("#E8D5B5")
-            box.set(x - rx * 0.7f, cy - ry * 0.3f, x + rx * 0.7f, cy + ry * 0.4f)
+            // Inner soft straw fill
+            fill.color = Color.parseColor("#E9D6B6")
+            box.set(x - rx * 0.68f, cy - ry * 0.28f, x + rx * 0.68f, cy + ry * 0.38f)
             c.drawOval(box, fill)
         }
-        // Layered twigs for a more 3D look
-        val n = (22 * built).toInt().coerceAtLeast(2)
+        // Layered twigs that appear progressively (natural placement)
+        val n = max(2, twigsPlaced)
         for (layer in 0..1) {
-            val scale = if (layer == 0) 1f else 0.82f
-            val offset = if (layer == 0) 0f else 4f * ds
-            twig.strokeWidth = (if (layer == 0) 2.6f else 1.8f) * ds
+            val scale = if (layer == 0) 1f else 0.84f
+            val offset = if (layer == 0) 0f else 3.5f * ds
+            twig.strokeWidth = (if (layer == 0) 2.5f else 1.7f) * ds
             for (i in 0 until n) {
-                val a = i / n.toFloat() * 6.28318f + 0.25f + layer * 0.3f
-                val near = sin(a) > -0.1f
+                val a = i / max(1f, n.toFloat()) * 6.28318f + 0.22f + layer * 0.28f
+                val near = sin(a) > -0.12f
                 if (front != near) continue
-                val shade = if (i % 4 == 0) Color.parseColor("#7A4E2A") else if (i % 4 == 1) Color.parseColor("#C49560") else if (i % 4 == 2) Color.parseColor("#5C3A22") else Color.parseColor("#A67C4E")
+                val shade = when (i % 5) {
+                    0 -> Color.parseColor("#7A4E2A")
+                    1 -> Color.parseColor("#C49560")
+                    2 -> Color.parseColor("#5C3A22")
+                    3 -> Color.parseColor("#A67C4E")
+                    else -> Color.parseColor("#8B6A3E")
+                }
                 twig.color = shade
                 val x0 = x + cos(a) * rx * scale
                 val y0 = cy + sin(a) * ry * scale + offset
-                val x1 = x + cos(a + 0.5f) * rx * 0.9f * scale
-                val y1 = cy + sin(a + 0.5f) * ry * scale + offset
+                val x1 = x + cos(a + 0.48f) * rx * 0.91f * scale
+                val y1 = cy + sin(a + 0.48f) * ry * scale + offset
                 c.drawLine(x0, y0, x1, y1, twig)
             }
         }
     }
 
     private fun drawEgg(c: Canvas, x: Float, y: Float, ds: Float) {
-        val s = ds * (0.24f + lay * 0.18f)
-        val ex = x + 10f * ds
-        val ey = y - 6f * ds
-        egg.color = Color.parseColor("#F6E2C8")
-        box.set(ex - 15f * s, ey - 20f * s, ex + 15f * s, ey + 18f * s)
+        val s = ds * (0.22f + lay * 0.20f)
+        val ex = x + 8f * ds
+        val ey = y - 5f * ds
+        egg.color = Color.parseColor("#F7E3C9")
+        box.set(ex - 14f * s, ey - 19f * s, ex + 14f * s, ey + 17f * s)
         c.drawOval(box, egg)
-        eggLine.strokeWidth = 1.2f * ds
-        if (phase == Phase.BROOD && t > 4.5f) {
-            c.drawLine(ex - 3f * s, ey - 12f * s, ex + 1f * s, ey - 1f * s, eggLine)
-            c.drawLine(ex + 1f * s, ey - 1f * s, ex + 7f * s, ey - 7f * s, eggLine)
+        eggLine.strokeWidth = 1.15f * ds
+        if (phase == Phase.BROOD && t > 4f) {
+            c.drawLine(ex - 2.5f * s, ey - 11f * s, ex + 0.5f * s, ey - 1f * s, eggLine)
+            c.drawLine(ex + 0.5f * s, ey - 1f * s, ex + 6f * s, ey - 6.5f * s, eggLine)
         }
     }
 
     private fun drawShells(c: Canvas, x: Float, y: Float, ds: Float) {
-        egg.color = Color.argb((shell * 240f).toInt().coerceIn(0, 255), 246, 226, 200)
-        val sx = x - 16f * ds
-        val sy = y - 2f * ds
-        c.drawOval(sx, sy - 5f * ds, sx + 14f * ds, sy + 5f * ds, egg)
-        c.drawOval(sx + 18f * ds, sy - 3f * ds, sx + 30f * ds, sy + 6f * ds, egg)
+        egg.color = Color.argb((shell * 230f).toInt().coerceIn(0, 255), 247, 227, 201)
+        val sx = x - 15f * ds
+        val sy = y - 1f * ds
+        c.drawOval(sx, sy - 4.5f * ds, sx + 13f * ds, sy + 4.5f * ds, egg)
+        c.drawOval(sx + 17f * ds, sy - 2.5f * ds, sx + 29f * ds, sy + 5.5f * ds, egg)
     }
 }
