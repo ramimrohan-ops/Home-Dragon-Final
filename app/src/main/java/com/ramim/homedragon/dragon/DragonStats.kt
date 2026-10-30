@@ -1,8 +1,5 @@
 package com.ramim.homedragon.dragon
 
-import kotlin.math.maxOf
-import kotlin.math.minOf
-
 /** Combat stats for a dragon: HP, attack power and damage reduction. */
 data class DragonStats(
     val hp: Int,
