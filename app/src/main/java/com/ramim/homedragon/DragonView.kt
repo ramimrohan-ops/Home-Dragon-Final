@@ -134,6 +134,7 @@ class DragonView(context: Context) : View(context) {
     private val hl = FloatArray(2)
     private val st = DragonModel.State()
     private var mode = Mode.IDLE
+    private val nest = NestLife()
     private var air = false
     private var iconIdx = 0
     private var faceT = 1f
@@ -1401,7 +1402,7 @@ class DragonView(context: Context) : View(context) {
         st.crouch = if (mode == Mode.CROUCH) clampF(t / dur * 1.15f, 0f, 1f) else max(0f, st.crouch - dt * (if (air) 6f else 4.5f))
 
         if (bugOn) updateBug(dt)
-        else if ((mode == Mode.IDLE || mode == Mode.WALK || mode == Mode.SCRATCH) && fade >= 0.99f && !hiddenByApp && swipeState == 0 && icons.size >= 2) {
+        else if (!nest.hold() && (mode == Mode.IDLE || mode == Mode.WALK || mode == Mode.SCRATCH) && fade >= 0.99f && !hiddenByApp && swipeState == 0 && icons.size >= 2) {
             bugSpawnT -= dt                                             // a bug appears now and then, while the dragon is awake and not busy
             if (bugSpawnT <= 0f) spawnBug()
         }
@@ -1413,10 +1414,19 @@ class DragonView(context: Context) : View(context) {
                 startHunt()
             }
         }
+        val canNest = mode == Mode.IDLE && !air && !bugOn && fade >= 0.99f && !hiddenByApp && swipeState == 0 && icons.isNotEmpty() && ic(iconIdx).big
+        nest.tick(dt, canNest)
+        if (nest.readyToFly() && mode == Mode.IDLE && !air) {
+            nest.usedSkyFlight()
+            doAction("fly")
+        }
         val ox = st.x; val oy = st.y
         var firing = false
         when (mode) {
-            Mode.IDLE -> { timer -= dt; if (timer <= 0f) chooseNext() }
+            Mode.IDLE -> {
+                if (nest.hold()) timer = 1.4f
+                else { timer -= dt; if (timer <= 0f) chooseNext() }
+            }
             Mode.WALK -> {
                 val spd = 26f * sc * st.walk * st.walk
                 val dx = walkTo - st.x; val stp = min(abs(dx), spd * dt)
@@ -1702,7 +1712,11 @@ class DragonView(context: Context) : View(context) {
         val saved = if (layer) c.saveLayerAlpha(0f, 0f, width.toFloat(), height.toFloat(), (fe * 255f).toInt()) else 0
         for (ic in icons) if (ic.burn > 0.01f || ic.heat > 0.02f) drawBurn(c, ic)
         drawSmoke(c)
+        nest.placeChick(st.x, st.y, st.ds, time, width.toFloat(), height.toFloat())
+        nest.drawUnder(c, st.x, st.y, st.ds)
         model.draw(c, st)
+        nest.drawOver(c, st.x, st.y, st.ds)
+        if (nest.showChick) model.draw(c, nest.chick)
         drawForage(c)
         drawFlame(c)
         if (layer) c.restoreToCount(saved)
