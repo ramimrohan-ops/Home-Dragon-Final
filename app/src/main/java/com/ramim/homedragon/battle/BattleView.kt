@@ -69,5 +69,5 @@ class BattleView @JvmOverloads constructor(
         }
     }
 
-    fun setState(s: BattleState) { state = s }
+    fun showBattle(s: BattleState) { state = s }
 }

@@ -27,7 +27,7 @@ class BattleActivity : Activity() {
         )
 
         arena = BattleView(this)
-        arena.setState(engine.current())
+        arena.showBattle(engine.current())
 
         val attackBtn = Button(this)
         attackBtn.text = "Attack"
@@ -37,7 +37,7 @@ class BattleActivity : Activity() {
             if (cur.outcome == BattleOutcome.IN_PROGRESS) {
                 engine.opponentAttack()
             }
-            arena.setState(engine.current())
+            arena.showBattle(engine.current())
             log.text = cur.log.lastOrNull() ?: ""
         }
 
