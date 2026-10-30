@@ -745,10 +745,11 @@ class DragonView(context: Context) : View(context) {
         }
         icons = newIcons
         applyScale()
-        // If the nest was anchored to an icon that is no longer here, lose it
-        if (nest.hasAnchor) {
-            val stillHere = icons.any { abs(it.cx - nest.anchorX) < size * 0.6f && abs(it.cy - nest.anchorY) < size * 0.6f }
-            if (!stillHere || IconRegistry.page != nest.anchorPage) {
+        // Nest stays on its page. Only lose it if we are on the anchor page and the icon is gone.
+        // Swiping to another page must not destroy the nest.
+        if (nest.hasAnchor && IconRegistry.page == nest.anchorPage) {
+            val stillHere = icons.any { abs(it.cx - nest.anchorX) < size * 0.7f && abs(it.cy - nest.anchorY) < size * 0.7f }
+            if (!stillHere) {
                 nest.loseNest()
             }
         }
@@ -1733,11 +1734,16 @@ class DragonView(context: Context) : View(context) {
         val saved = if (layer) c.saveLayerAlpha(0f, 0f, width.toFloat(), height.toFloat(), (fe * 255f).toInt()) else 0
         for (ic in icons) if (ic.burn > 0.01f || ic.heat > 0.02f) drawBurn(c, ic)
         drawSmoke(c)
-        nest.placeChick(st.x, st.y, st.ds, time, width.toFloat(), height.toFloat())
-        nest.drawUnder(c, st.x, st.y, st.ds)
+        val nestOnThisPage = !nest.hasAnchor || IconRegistry.page == nest.anchorPage
+        if (nestOnThisPage) {
+            nest.placeChick(st.x, st.y, st.ds, time, width.toFloat(), height.toFloat())
+            nest.drawUnder(c, st.x, st.y, st.ds)
+        }
         model.draw(c, st)
-        nest.drawOver(c, st.x, st.y, st.ds)
-        if (nest.showChick) model.draw(c, nest.chick)
+        if (nestOnThisPage) {
+            nest.drawOver(c, st.x, st.y, st.ds)
+            if (nest.showChick) model.draw(c, nest.chick)
+        }
         drawForage(c)
         drawFlame(c)
         if (layer) c.restoreToCount(saved)
